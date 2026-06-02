@@ -1,4 +1,4 @@
-"""Core AI caller for ARIA — routes between Groq and Gemini with auto-fallback."""
+"""Core AI caller for ARIA — Groq → Gemini → Mistral → Anthropic fallback chain."""
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -45,26 +44,32 @@ You are a trusted advisor who tells investors what they need to hear, not what t
 CRITICAL: Always respond with valid JSON only. No markdown fences, no preamble."""
 
 # ---------------------------------------------------------------------------
+# Provider metadata — order defines fallback priority
+# ---------------------------------------------------------------------------
+PROVIDER_META = {
+    "groq":      {"label": "Groq",      "model": "llama-3.3-70b-versatile", "free": True,  "paid": False},
+    "gemini":    {"label": "Gemini",    "model": "gemini-1.5-flash",         "free": True,  "paid": False},
+    "mistral":   {"label": "Mistral",   "model": "mistral-small-latest",     "free": True,  "paid": False},
+    "anthropic": {"label": "Anthropic", "model": "claude-sonnet-4-6",        "free": False, "paid": True},
+}
+
+# Anthropic triggers a dashboard warning — notify user they are being billed
+PAID_PROVIDERS = {"anthropic"}
+
+# ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
 
 class ConfigError(Exception):
-    """Raised when required API keys are absent or invalid."""
-
+    """Raised when no usable API key is found."""
 
 class RateLimitError(Exception):
-    """Raised when all providers are rate-limited simultaneously."""
-
+    """Raised when every configured provider is rate-limited."""
 
 # ---------------------------------------------------------------------------
 # Network errors eligible for tenacity retry
 # ---------------------------------------------------------------------------
-_NETWORK_EXCEPTIONS: tuple[type[Exception], ...] = (
-    ConnectionError,
-    TimeoutError,
-    OSError,
-)
-
+_NETWORK_EXCEPTIONS: tuple[type[Exception], ...] = (ConnectionError, TimeoutError, OSError)
 try:
     import httpx
     _NETWORK_EXCEPTIONS = (*_NETWORK_EXCEPTIONS, httpx.NetworkError, httpx.TimeoutException)
@@ -77,26 +82,40 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 class AIEngine:
-    _GROQ_MODEL = "llama-3.3-70b-versatile"
-    _GEMINI_MODEL = "gemini-1.5-flash"
     _TEMPERATURE = 0.35
 
     def __init__(self) -> None:
         self.active_provider: str | None = None
-        self._groq_client = self._init_groq()
-        self._gemini_model = self._init_gemini()
+        self.using_paid_provider: bool = False
 
-        if self._groq_client is not None:
-            self.active_provider = "groq"
-        elif self._gemini_model is not None:
-            self.active_provider = "gemini"
-        else:
+        # Build the ordered list of available clients
+        self._clients: dict[str, Any] = {}
+        for name, init_fn in [
+            ("groq",      self._init_groq),
+            ("gemini",    self._init_gemini),
+            ("mistral",   self._init_mistral),
+            ("anthropic", self._init_anthropic),
+        ]:
+            client = init_fn()
+            if client is not None:
+                self._clients[name] = client
+                if self.active_provider is None:
+                    self.active_provider = name
+
+        if not self._clients:
             raise ConfigError(
                 "No API keys found. Set at least one of:\n"
-                "  GROQ_API_KEY   → https://console.groq.com/keys\n"
-                "  GEMINI_API_KEY → https://aistudio.google.com/app/apikey\n"
+                "  GROQ_API_KEY      → https://console.groq.com/keys        (free)\n"
+                "  GEMINI_API_KEY    → https://aistudio.google.com/apikey   (free)\n"
+                "  MISTRAL_API_KEY   → https://console.mistral.ai            (free tier)\n"
+                "  ANTHROPIC_API_KEY → https://console.anthropic.com         (paid)\n"
                 "Copy .env.example → .env and fill in your keys."
             )
+
+        logger.info(
+            "AIEngine ready. Providers available: %s",
+            " → ".join(self._clients.keys()),
+        )
 
     # ------------------------------------------------------------------
     # Public interface
@@ -104,53 +123,68 @@ class AIEngine:
 
     async def call(self, prompt: str, max_tokens: int = 3000) -> dict:
         """
-        Send `prompt` to the best available provider and return:
-            {"data": <parsed dict>, "provider": "groq" | "gemini"}
-
-        Groq is tried first; a 429 / RateLimitError triggers automatic
-        fallback to Gemini.  If both are exhausted, RateLimitError is raised.
+        Try each provider in priority order (Groq → Gemini → Mistral → Anthropic).
+        Rate limits trigger automatic fallback to the next provider.
+        Returns {"data": dict, "provider": str}.
         """
-        if self._groq_client is not None:
+        last_error: Exception | None = None
+
+        for name, client in self._clients.items():
             try:
-                raw = await self._call_groq(prompt, max_tokens)
-                self.active_provider = "groq"
-                logger.info("Provider: groq ✓")
-                return {"data": self._parse_json(raw), "provider": "groq"}
-            except RateLimitError:
-                logger.warning("Groq rate-limited — falling back to Gemini.")
+                raw = await self._dispatch(name, client, prompt, max_tokens)
+                self.active_provider = name
+                self.using_paid_provider = name in PAID_PROVIDERS
+                if self.using_paid_provider:
+                    logger.warning(
+                        "⚠ Using PAID provider: %s — you will be charged for this call.",
+                        PROVIDER_META[name]["label"],
+                    )
+                else:
+                    logger.info("Provider: %s ✓", name)
+                return {"data": self._parse_json(raw), "provider": name}
+
+            except RateLimitError as exc:
+                logger.warning("%s rate-limited — trying next provider.", name)
+                last_error = exc
             except Exception as exc:
-                logger.warning("Groq call failed (%s) — falling back to Gemini.", exc)
+                logger.warning("%s failed (%s) — trying next provider.", name, exc)
+                last_error = exc
 
-        if self._gemini_model is not None:
-            try:
-                raw = await self._call_gemini(prompt, max_tokens)
-                self.active_provider = "gemini"
-                logger.info("Provider: gemini ✓")
-                return {"data": self._parse_json(raw), "provider": "gemini"}
-            except RateLimitError:
-                raise RateLimitError(
-                    "Both Groq and Gemini are rate-limited.\n"
-                    "Wait ~60 s or upgrade your API plan:\n"
-                    "  Groq:   https://console.groq.com\n"
-                    "  Gemini: https://aistudio.google.com"
-                )
-
-        raise ConfigError("No AI provider is available. Check your API keys.")
+        # All providers exhausted
+        names = list(self._clients.keys())
+        raise RateLimitError(
+            f"All {len(names)} providers exhausted: {', '.join(names)}.\n"
+            f"Last error: {last_error}\n"
+            "Wait ~60s and retry, or add more API keys."
+        )
 
     def sync_call(self, prompt: str, max_tokens: int = 3000) -> dict:
         """Synchronous wrapper around :meth:`call`."""
         try:
-            loop = asyncio.get_running_loop()
-            # Inside an already-running event loop (e.g. Jupyter / Streamlit)
+            asyncio.get_running_loop()
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, self.call(prompt, max_tokens))
-                return future.result()
+                return pool.submit(asyncio.run, self.call(prompt, max_tokens)).result()
         except RuntimeError:
             return asyncio.run(self.call(prompt, max_tokens))
 
     # ------------------------------------------------------------------
-    # Groq
+    # Dispatcher
+    # ------------------------------------------------------------------
+
+    async def _dispatch(self, name: str, client: Any, prompt: str, max_tokens: int) -> str:
+        if name == "groq":
+            return await self._call_groq(client, prompt, max_tokens)
+        if name == "gemini":
+            return await self._call_gemini(client, prompt, max_tokens)
+        if name == "mistral":
+            return await self._call_mistral(client, prompt, max_tokens)
+        if name == "anthropic":
+            return await self._call_anthropic(client, prompt, max_tokens)
+        raise ValueError(f"Unknown provider: {name}")
+
+    # ------------------------------------------------------------------
+    # Groq  (free — 14,400 req/day)
     # ------------------------------------------------------------------
 
     def _init_groq(self):
@@ -164,46 +198,33 @@ class AIEngine:
             logger.warning("groq package not installed — pip install groq")
             return None
 
-    @retry(
-        retry=retry_if_exception_type(_NETWORK_EXCEPTIONS),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=8),
-        reraise=True,
-    )
-    async def _call_groq(self, prompt: str, max_tokens: int) -> str:
+    @retry(retry=retry_if_exception_type(_NETWORK_EXCEPTIONS),
+           stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=8), reraise=True)
+    async def _call_groq(self, client, prompt: str, max_tokens: int) -> str:
         try:
-            from groq import RateLimitError as GroqRateLimit
+            from groq import RateLimitError as GroqRL
         except ImportError:
-            GroqRateLimit = Exception  # type: ignore[assignment,misc]
-
+            GroqRL = Exception  # type: ignore[assignment,misc]
         try:
-            # groq client is synchronous — run in executor to keep async interface
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self._groq_client.chat.completions.create(
-                    model=self._GROQ_MODEL,
-                    messages=[
-                        {"role": "system", "content": ARIA_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=self._TEMPERATURE,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
-                ),
-            )
-            return response.choices[0].message.content
-
-        except GroqRateLimit as exc:
-            raise RateLimitError(str(exc)) from exc
-        except Exception as exc:
-            # Surface HTTP 429s that aren't wrapped as GroqRateLimit
-            if "429" in str(exc) or "rate_limit" in str(exc).lower():
-                raise RateLimitError(str(exc)) from exc
+            resp = await loop.run_in_executor(None, lambda: client.chat.completions.create(
+                model=PROVIDER_META["groq"]["model"],
+                messages=[{"role": "system", "content": ARIA_SYSTEM_PROMPT},
+                          {"role": "user",   "content": prompt}],
+                temperature=self._TEMPERATURE,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+            ))
+            return resp.choices[0].message.content
+        except GroqRL as e:
+            raise RateLimitError(str(e)) from e
+        except Exception as e:
+            if "429" in str(e) or "rate_limit" in str(e).lower():
+                raise RateLimitError(str(e)) from e
             raise
 
     # ------------------------------------------------------------------
-    # Gemini
+    # Gemini  (free — 1,500 req/day)
     # ------------------------------------------------------------------
 
     def _init_gemini(self):
@@ -214,38 +235,95 @@ class AIEngine:
             import google.generativeai as genai
             genai.configure(api_key=key)
             return genai.GenerativeModel(
-                model_name=self._GEMINI_MODEL,
+                model_name=PROVIDER_META["gemini"]["model"],
                 system_instruction=ARIA_SYSTEM_PROMPT,
-                generation_config={
-                    "temperature": self._TEMPERATURE,
-                    "response_mime_type": "application/json",
-                },
+                generation_config={"temperature": self._TEMPERATURE,
+                                   "response_mime_type": "application/json"},
             )
         except ImportError:
-            logger.warning("google-generativeai not installed — pip install google-generativeai")
+            logger.warning("google-generativeai not installed")
             return None
 
-    @retry(
-        retry=retry_if_exception_type(_NETWORK_EXCEPTIONS),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=8),
-        reraise=True,
-    )
-    async def _call_gemini(self, prompt: str, max_tokens: int) -> str:
+    @retry(retry=retry_if_exception_type(_NETWORK_EXCEPTIONS),
+           stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=8), reraise=True)
+    async def _call_gemini(self, client, prompt: str, max_tokens: int) -> str:
         loop = asyncio.get_event_loop()
         try:
-            response = await loop.run_in_executor(
-                None,
-                lambda: self._gemini_model.generate_content(
-                    prompt,
-                    generation_config={"max_output_tokens": max_tokens},
-                ),
-            )
-            return response.text
-        except Exception as exc:
-            msg = str(exc)
-            if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
-                raise RateLimitError(msg) from exc
+            resp = await loop.run_in_executor(None, lambda: client.generate_content(
+                prompt, generation_config={"max_output_tokens": max_tokens}
+            ))
+            return resp.text
+        except Exception as e:
+            if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
+                raise RateLimitError(str(e)) from e
+            raise
+
+    # ------------------------------------------------------------------
+    # Mistral  (free tier — mistral-small-latest)
+    # ------------------------------------------------------------------
+
+    def _init_mistral(self):
+        key = os.getenv("MISTRAL_API_KEY", "")
+        if not key or key.startswith("..."):
+            return None
+        try:
+            from mistralai import Mistral
+            return Mistral(api_key=key)
+        except ImportError:
+            logger.warning("mistralai package not installed — pip install mistralai")
+            return None
+
+    @retry(retry=retry_if_exception_type(_NETWORK_EXCEPTIONS),
+           stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=8), reraise=True)
+    async def _call_mistral(self, client, prompt: str, max_tokens: int) -> str:
+        loop = asyncio.get_event_loop()
+        try:
+            resp = await loop.run_in_executor(None, lambda: client.chat.complete(
+                model=PROVIDER_META["mistral"]["model"],
+                messages=[{"role": "system", "content": ARIA_SYSTEM_PROMPT},
+                          {"role": "user",   "content": prompt}],
+                temperature=self._TEMPERATURE,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+            ))
+            return resp.choices[0].message.content
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "rate" in msg.lower() or "quota" in msg.lower():
+                raise RateLimitError(msg) from e
+            raise
+
+    # ------------------------------------------------------------------
+    # Anthropic  (PAID — last resort, triggers dashboard warning)
+    # ------------------------------------------------------------------
+
+    def _init_anthropic(self):
+        key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not key or key.startswith("..."):
+            return None
+        try:
+            import anthropic
+            return anthropic.Anthropic(api_key=key)
+        except ImportError:
+            logger.warning("anthropic package not installed — pip install anthropic")
+            return None
+
+    @retry(retry=retry_if_exception_type(_NETWORK_EXCEPTIONS),
+           stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=8), reraise=True)
+    async def _call_anthropic(self, client, prompt: str, max_tokens: int) -> str:
+        loop = asyncio.get_event_loop()
+        try:
+            resp = await loop.run_in_executor(None, lambda: client.messages.create(
+                model=PROVIDER_META["anthropic"]["model"],
+                max_tokens=max_tokens,
+                system=ARIA_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+            ))
+            return resp.content[0].text
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "rate" in msg.lower() or "overloaded" in msg.lower():
+                raise RateLimitError(msg) from e
             raise
 
     # ------------------------------------------------------------------
@@ -254,28 +332,19 @@ class AIEngine:
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
-        """Strip markdown fences then parse JSON. Returns dict on success."""
         if not raw:
             raise ValueError("Empty response from AI provider.")
-
-        # Strip ```json ... ``` or ``` ... ``` fences
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```$", "", cleaned.strip())
-
         try:
             result = json.loads(cleaned)
         except json.JSONDecodeError:
-            # Last resort: find the first {...} block
             match = re.search(r"\{.*\}", cleaned, re.DOTALL)
             if match:
                 result = json.loads(match.group())
             else:
                 raise ValueError(f"No valid JSON found in response:\n{raw[:400]}")
-
-        if not isinstance(result, dict):
-            result = {"value": result}
-
-        return result
+        return result if isinstance(result, dict) else {"value": result}
 
 
 # ---------------------------------------------------------------------------
@@ -284,31 +353,23 @@ class AIEngine:
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-    # Load .env if present
     try:
         from dotenv import load_dotenv
+        load_dotenv(Path(__file__).resolve().parents[2] / "aria-stock-agent" / ".env")
         load_dotenv()
     except ImportError:
         pass
 
-    print("\n  ARIA AI Engine — self-test\n" + "─" * 40)
-
+    print("\n  ARIA AI Engine — self-test\n" + "─" * 44)
     try:
         engine = AIEngine()
-        print(f"  Initialized. Active provider: {engine.active_provider}")
-
-        result = engine.sync_call(
-            prompt='Return JSON: {"test": true, "message": "ARIA online"}'
-        )
-
-        print(f"\n  Provider responded: {result['provider']}")
-        print(f"  Parsed data:        {json.dumps(result['data'], indent=4)}")
-        print("\n  ✓ AI Engine is operational.\n")
-
+        print(f"  Providers available : {' → '.join(engine._clients)}")
+        print(f"  Active provider     : {engine.active_provider}")
+        result = engine.sync_call('Return JSON: {"test": true, "message": "ARIA online"}')
+        print(f"\n  ✓ Response from     : {result['provider']}")
+        print(f"  ✓ Paid provider     : {engine.using_paid_provider}")
+        print(f"  ✓ Data              : {result['data']}\n")
     except ConfigError as e:
-        print(f"\n  ✘ ConfigError: {e}\n")
-        sys.exit(1)
+        print(f"\n  ✘ ConfigError: {e}\n"); sys.exit(1)
     except RateLimitError as e:
-        print(f"\n  ✘ RateLimitError: {e}\n")
-        sys.exit(1)
+        print(f"\n  ✘ RateLimitError: {e}\n"); sys.exit(1)

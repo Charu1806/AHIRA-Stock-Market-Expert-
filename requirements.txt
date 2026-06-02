@@ -1,6 +1,7 @@
 anthropic
 groq
 google-generativeai
+mistralai
 feedparser
 yfinance
 requests

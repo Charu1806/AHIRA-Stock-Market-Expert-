@@ -372,15 +372,31 @@ with st.sidebar:
     st.divider()
     # Provider status
     try:
-        from agents.ai_engine import AIEngine
+        from agents.ai_engine import AIEngine, PROVIDER_META, PAID_PROVIDERS
         _eng = AIEngine()
         _prov = _eng.active_provider or "none"
-        _dot_color = "#2da44e" if _prov == "groq" else T["accent"] if _prov == "gemini" else T["text_muted"]
+        _available = list(_eng._clients.keys())
+
+        # Dot colour per provider
+        _dot = {"groq": "#2da44e", "gemini": T["accent"],
+                "mistral": "#ff7043", "anthropic": "#da3633"}.get(_prov, T["text_muted"])
+
         st.html(
             f'<div style="font-size:0.8rem;color:{T["text_muted"]}">AI Provider &nbsp;'
-            f'<span style="color:{_dot_color}">●</span> '
-            f'<strong style="color:{T["text"]}">{_prov.upper()}</strong></div>',
+            f'<span style="color:{_dot}">●</span> '
+            f'<strong style="color:{T["text"]}">{_prov.upper()}</strong></div>'
+            f'<div style="font-size:0.7rem;color:{T["text_muted"]};margin-top:3px">'
+            f'Chain: {" → ".join(_available)}</div>',
         )
+
+        # ⚠ Paid provider warning — shown prominently when Anthropic is active
+        if _prov in PAID_PROVIDERS:
+            st.warning(
+                f"⚠️ **{_prov.upper()} is active** — this is a paid API. "
+                f"You are being charged per token. "
+                f"Add a free key (Groq / Gemini / Mistral) to avoid charges.",
+                icon="💸",
+            )
     except Exception:
         st.html('<div style="font-size:0.8rem;color:#da3633">● No provider configured</div>')
 
@@ -392,6 +408,20 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════
 # TOP ROW — Market Snapshot
 # ══════════════════════════════════════════════════════════════════════════
+
+# ── Paid provider top banner ──────────────────────────────────────────────
+try:
+    from agents.ai_engine import AIEngine, PAID_PROVIDERS
+    _top_eng = AIEngine()
+    if _top_eng.active_provider in PAID_PROVIDERS:
+        st.error(
+            f"💸 **WARNING — PAID PROVIDER ACTIVE: {_top_eng.active_provider.upper()}**  \n"
+            f"All AI calls are being billed to your Anthropic account.  \n"
+            f"Add a **GROQ_API_KEY**, **GEMINI_API_KEY**, or **MISTRAL_API_KEY** "
+            f"(all free) to switch back to free tier automatically.",
+        )
+except Exception:
+    pass
 
 st.markdown("### Live Markets")
 
