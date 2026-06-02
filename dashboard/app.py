@@ -436,26 +436,61 @@ def _snap_card(label: str, data: dict) -> str:
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════
 
+# ── News source definitions ────────────────────────────────────────────────
+_ALL_SOURCES = {
+    "bloomberg":   ("Bloomberg",        "https://feeds.bloomberg.com/technology/news.rss",                                   "🇺🇸"),
+    "cnbc":        ("CNBC",             "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069","🇺🇸"),
+    "wsj":         ("WSJ",              "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",                                     "🇺🇸"),
+    "ft":          ("FT",               "https://www.ft.com/rss/home/us",                                                    "🇺🇸"),
+    "reuters":     ("Reuters",          "https://feeds.reuters.com/reuters/businessNews",                                    "🌍"),
+    "et":          ("Economic Times",   "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",              "🇮🇳"),
+    "moneycontrol":("Moneycontrol",     "https://www.moneycontrol.com/rss/MCtopnews.xml",                                   "🇮🇳"),
+    "mint":        ("Mint",             "https://www.livemint.com/rss/markets",                                              "🇮🇳"),
+    "bs":          ("Business Std",     "https://www.business-standard.com/rss/home_page_top_stories.rss",                  "🇮🇳"),
+}
+_DEFAULT_SOURCES = ["bloomberg", "cnbc", "wsj", "et", "moneycontrol", "mint"]
+
+if "active_srcs" not in st.session_state:
+    st.session_state.active_srcs = set(_DEFAULT_SOURCES)
+
 with st.sidebar:
     st.html('<div class="aria-logo">🤖 ARIA</div>')
     st.html('<div class="aria-sub">Autonomous Research &amp; Investment Agent</div>')
 
     # ── Theme toggle ──
-    new_theme = st.radio(
-        "Theme",
-        ["Dark", "Light"],
-        index=0 if st.session_state.theme == "Dark" else 1,
-        horizontal=True,
-    )
+    new_theme = st.radio("Theme", ["Dark", "Light"],
+                         index=0 if st.session_state.theme == "Dark" else 1,
+                         horizontal=True)
     if new_theme != st.session_state.theme:
         st.session_state.theme = new_theme
         st.rerun()
 
     st.divider()
+    period_label = st.selectbox("Period", list(_PERIOD_MAP.keys()), index=0)
+    period       = _PERIOD_MAP[period_label]
 
-    period_label  = st.selectbox("Period", list(_PERIOD_MAP.keys()), index=0)
-    period        = _PERIOD_MAP[period_label]
-    source_filter = st.selectbox("Sources", ["All", "US Sources", "India Sources", "Global"])
+    # ── News source chips ──────────────────────────────────────────────────
+    st.markdown("**News Sources**")
+    st.html(
+        f'<div style="font-size:0.72rem;color:{T["text_muted"]};margin-bottom:8px">'
+        f'Toggle sources — AI only calls once per day regardless</div>'
+    )
+    cols2 = st.columns(2)
+    for i, (key, (label, url, flag)) in enumerate(_ALL_SOURCES.items()):
+        active = key in st.session_state.active_srcs
+        col = cols2[i % 2]
+        btn_label = f"{'✓ ' if active else ''}{flag} {label}"
+        btn_type  = "primary" if active else "secondary"
+        if col.button(btn_label, key=f"src_{key}", use_container_width=True):
+            if active:
+                st.session_state.active_srcs.discard(key)
+            else:
+                st.session_state.active_srcs.add(key)
+            # Source change invalidates today's news cache
+            for t in ("news_world", "india_news"):
+                _clear(t, period)
+                _bust_disk_cache(period, t)
+            st.rerun()
 
     st.divider()
     run_all = st.button("🚀 Run Full Analysis", type="primary", width="stretch")
@@ -466,53 +501,25 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.markdown("**Refresh individual tabs:**")
-    if st.button("🌐 Refresh World News",   width="stretch"):
-        _clear("news_world",   period); _bust_disk_cache(period, "news_world"); st.rerun()
-    if st.button("🇮🇳 Refresh India News",  width="stretch"):
-        _clear("india_news",   period); _bust_disk_cache(period, "india_news"); st.rerun()
-    if st.button("📈 Refresh US Stocks",    width="stretch"):
-        _clear("us_stocks",    period); _bust_disk_cache(period, "us_stocks"); st.rerun()
-    if st.button("📉 Refresh India Stocks", width="stretch"):
-        _clear("india_stocks", period); _bust_disk_cache(period, "india_stocks"); st.rerun()
-    if st.button("🎓 Refresh Lesson",       width="stretch"):
-        _clear("lesson",       period); _bust_disk_cache(period, "lesson"); st.rerun()
-
-    st.divider()
     # Provider status
     try:
-        from agents.ai_engine import AIEngine, PROVIDER_META, PAID_PROVIDERS
-        _eng = AIEngine()
+        from agents.ai_engine import AIEngine, PAID_PROVIDERS
+        _eng  = AIEngine()
         _prov = _eng.active_provider or "none"
-        _available = list(_eng._clients.keys())
-
-        # Dot colour per provider
-        _dot = {"groq": "#2da44e", "gemini": T["accent"],
-                "mistral": "#ff7043", "anthropic": "#da3633"}.get(_prov, T["text_muted"])
-
+        _avail = list(_eng._clients.keys())
+        _dot = {"groq":"#2da44e","gemini":T["accent"],"mistral":"#ff7043","anthropic":"#da3633"}.get(_prov, T["text_muted"])
         st.html(
             f'<div style="font-size:0.8rem;color:{T["text_muted"]}">AI Provider &nbsp;'
-            f'<span style="color:{_dot}">●</span> '
-            f'<strong style="color:{T["text"]}">{_prov.upper()}</strong></div>'
-            f'<div style="font-size:0.7rem;color:{T["text_muted"]};margin-top:3px">'
-            f'Chain: {" → ".join(_available)}</div>',
+            f'<span style="color:{_dot}">●</span> <strong style="color:{T["text"]}">{_prov.upper()}</strong></div>'
+            f'<div style="font-size:0.7rem;color:{T["text_muted"]};margin-top:2px">Chain: {" → ".join(_avail)}</div>',
         )
-
-        # ⚠ Paid provider warning — shown prominently when Anthropic is active
         if _prov in PAID_PROVIDERS:
-            st.warning(
-                f"⚠️ **{_prov.upper()} is active** — this is a paid API. "
-                f"You are being charged per token. "
-                f"Add a free key (Groq / Gemini / Mistral) to avoid charges.",
-                icon="💸",
-            )
+            st.warning(f"💸 **{_prov.upper()} active** — you are being charged. Add a free key.", icon="⚠️")
     except Exception:
         st.html('<div style="font-size:0.8rem;color:#da3633">● No provider configured</div>')
 
-    st.html(
-        f'<div style="font-size:0.75rem;color:{T["text_muted"]};margin-top:6px">'
-        f'Last refreshed: {datetime.now().strftime("%H:%M:%S")}</div>',
-    )
+    st.html(f'<div style="font-size:0.72rem;color:{T["text_muted"]};margin-top:6px">'
+            f'Updated: {datetime.now().strftime("%H:%M:%S")}</div>')
 
 # ══════════════════════════════════════════════════════════════════════════
 # TOP ROW — Market Snapshot
@@ -558,12 +565,25 @@ st.divider()
 # TABS  (5 tabs — US+Global merged into "World News")
 # ══════════════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+# ── Active source URLs for agents ─────────────────────────────────────────
+def _active_urls(region: str) -> list[str]:
+    """Return RSS URLs for currently toggled-on sources matching the region."""
+    flags = {"🇺🇸": "us", "🇮🇳": "india", "🌍": "global"}
+    result = []
+    for key, (label, url, flag) in _ALL_SOURCES.items():
+        if key in st.session_state.active_srcs:
+            src_region = flags.get(flag, "global")
+            if region == "all" or src_region == region or region == "global":
+                result.append(url)
+    return result or list(_ALL_SOURCES[k][1] for k in _DEFAULT_SOURCES)
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🌐 World News",
-    "🇮🇳 India News & Stocks",
-    "📈 Top US Stocks",
-    "📉 Top India Stocks",
-    "🎓 Learning of the Day",
+    "🇮🇳 India News",
+    "📈 US Stocks",
+    "📉 India Stocks",
+    "📊 Trends",
+    "🎓 Learning",
 ])
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -573,7 +593,9 @@ with tab1:
     # Lazy load — only call AI on first visit; instant on tab switch
     def _load_world():
         na = NewsAgent()
-        return {"us": na.analyse_us_news(period), "global": na.analyse_global_news(period)}
+        srcs = _active_urls("all")
+        return {"us": na.analyse_us_news(period, sources=srcs),
+                "global": na.analyse_global_news(period, sources=srcs)}
     try:
         world = _smart_load("news_world", period, _load_world)
     except Exception as e:
@@ -699,7 +721,7 @@ with tab1:
 # ──────────────────────────────────────────────────────────────────────────
 with tab2:
     def _load_india():
-        return NewsAgent().analyse_india_news(period)
+        return NewsAgent().analyse_india_news(period, sources=_active_urls("india"))
     try:
         in_data = _smart_load("india_news", period, _load_india)
     except Exception as e:
@@ -992,9 +1014,143 @@ with tab4:
         st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {summary_in}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
-# TAB 5 — Learning of the Day
+# ──────────────────────────────────────────────────────────────────────────
+# TAB 5 — Stock Trends  (yfinance only — zero AI tokens — cached daily)
 # ──────────────────────────────────────────────────────────────────────────
 with tab5:
+    import io as _io
+    from datetime import date as _date
+    import yfinance as _yf
+    import pandas as _pd
+
+    st.markdown("#### 📊 Stock Trends — Historical Price Chart")
+    st.html(
+        f'<div style="font-size:0.8rem;color:{T["text_muted"]};margin-bottom:16px">'
+        f'Live Yahoo Finance data · No AI calls · Cached once per day</div>'
+    )
+
+    # ── Quick-pick popular tickers ────────────────────────────────────────
+    QUICK_TICKERS = {
+        "S&P 500":"^GSPC","NASDAQ":"^IXIC","VIX":"^VIX",
+        "NVDA":"NVDA","AAPL":"AAPL","TSLA":"TSLA","MSFT":"MSFT",
+        "NIFTY":"^NSEI","RELIANCE":"RELIANCE.NS","TCS":"TCS.NS",
+        "HDFC Bank":"HDFCBANK.NS","INFY":"INFY.NS",
+    }
+    qcols = st.columns(6)
+    for i, (lbl, sym) in enumerate(QUICK_TICKERS.items()):
+        if qcols[i % 6].button(lbl, key=f"qt_{sym}", use_container_width=True):
+            st.session_state["trend_ticker"] = sym
+            st.rerun()
+
+    ticker_in = st.text_input(
+        "Or type any ticker (Yahoo Finance format)",
+        value=st.session_state.get("trend_ticker", "^GSPC"),
+        placeholder="AAPL · RELIANCE.NS · ^NSEI · BTC-USD",
+    ).strip().upper()
+    if ticker_in != st.session_state.get("trend_ticker",""):
+        st.session_state["trend_ticker"] = ticker_in
+        st.rerun()
+    ticker = st.session_state.get("trend_ticker", "^GSPC")
+
+    # ── Controls ──────────────────────────────────────────────────────────
+    cc1, cc2, cc3 = st.columns([3, 2, 2])
+    _period_opts = {"1 Month":"1mo","1 Year":"1y","5 Years":"5y","10 Years":"10y"}
+    chart_period_lbl = cc1.radio("Period", list(_period_opts.keys()), horizontal=True, index=1)
+    chart_period     = _period_opts[chart_period_lbl]
+    chart_type       = cc2.radio("Chart type", ["Line","Candlestick"], horizontal=True)
+    show_vol         = cc3.checkbox("Volume", value=True)
+
+    # ── Cached data fetch ─────────────────────────────────────────────────
+    @st.cache_data(ttl=86400, show_spinner=False)
+    def _fetch_trend(sym: str, per: str) -> bytes:
+        df = _yf.download(sym, period=per, progress=False, auto_adjust=True)
+        if isinstance(df.columns, _pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df.to_parquet()
+
+    with st.spinner(f"Loading {ticker} · {chart_period_lbl}…"):
+        try:
+            df_trend = _pd.read_parquet(_io.BytesIO(_fetch_trend(ticker, chart_period)))
+        except Exception as ex:
+            st.error(f"Failed to load {ticker}: {ex}")
+            df_trend = _pd.DataFrame()
+
+    if df_trend.empty:
+        st.warning("No data returned — check the ticker symbol.")
+    else:
+        close  = df_trend["Close"].squeeze()
+        first_p = float(close.iloc[0])
+        last_p  = float(close.iloc[-1])
+        chg_pct = (last_p - first_p) / first_p * 100
+        chg_col = "#2da44e" if chg_pct >= 0 else "#cf222e"
+        arrow   = "▲" if chg_pct >= 0 else "▼"
+
+        # Summary row
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Current",     f"{last_p:,.2f}")
+        s2.metric(f"{chart_period_lbl} Change", f"{arrow} {abs(chg_pct):.1f}%",
+                  delta=f"{chg_pct:+.2f}%", delta_color="normal")
+        s3.metric("Period High", f"{float(close.max()):,.2f}")
+        s4.metric("Period Low",  f"{float(close.min()):,.2f}")
+
+        # Price chart
+        fig = go.Figure()
+        if chart_type == "Candlestick" and {"Open","High","Low","Close"}.issubset(df_trend.columns):
+            fig.add_trace(go.Candlestick(
+                x=df_trend.index,
+                open=df_trend["Open"].squeeze(),
+                high=df_trend["High"].squeeze(),
+                low=df_trend["Low"].squeeze(),
+                close=close,
+                name=ticker,
+                increasing_line_color="#2da44e",
+                decreasing_line_color="#cf222e",
+            ))
+        else:
+            fig.add_trace(go.Scatter(
+                x=df_trend.index, y=close,
+                mode="lines", name=ticker,
+                line=dict(color=chg_col, width=2),
+                fill="tozeroy",
+                fillcolor=f"rgba({'45,164,78' if chg_pct>=0 else '207,34,46'},0.06)",
+            ))
+        fig.update_layout(
+            paper_bgcolor=T["plot_bg"], plot_bgcolor=T["plot_bg"],
+            font_color=T["text"], height=440,
+            margin=dict(t=10, b=0, l=0, r=0),
+            xaxis=dict(gridcolor=T["plot_grid"], rangeslider_visible=False),
+            yaxis=dict(gridcolor=T["plot_grid"]),
+            showlegend=False,
+        )
+        st.plotly_chart(fig, width="stretch")
+
+        # Volume chart
+        if show_vol and "Volume" in df_trend.columns:
+            vol = df_trend["Volume"].squeeze()
+            vfig = go.Figure(go.Bar(
+                x=df_trend.index, y=vol,
+                marker_color=T["text_muted"], opacity=0.5,
+            ))
+            vfig.update_layout(
+                paper_bgcolor=T["plot_bg"], plot_bgcolor=T["plot_bg"],
+                font_color=T["text"], height=150,
+                margin=dict(t=0, b=10, l=0, r=0),
+                xaxis=dict(gridcolor=T["plot_grid"]),
+                yaxis=dict(gridcolor=T["plot_grid"], title="Volume"),
+                showlegend=False,
+            )
+            st.plotly_chart(vfig, width="stretch")
+
+        st.html(
+            f'<div style="font-size:0.72rem;color:{T["text_muted"]};margin-top:2px">'
+            f'📦 Cached today · Source: Yahoo Finance · '
+            f'Ticker format: US=AAPL · India=RELIANCE.NS · Index=^NSEI</div>'
+        )
+
+# ──────────────────────────────────────────────────────────────────────────
+# TAB 6 — Learning of the Day
+# ──────────────────────────────────────────────────────────────────────────
+with tab6:
     def _load_lesson():
         return LearningAgent().get_daily_lesson()
     try:

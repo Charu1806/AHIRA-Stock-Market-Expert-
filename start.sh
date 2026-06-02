@@ -2,14 +2,13 @@
 set -e
 
 echo "🤖 Starting ARIA Stock Agent..."
-
-# Create data directories if missing
 mkdir -p data/cache data/reports
 
-# Start background scheduler (weekday 08:45 IST morning + 19:00 IST evening)
-#python main.py --schedule &
-#SCHED_PID=$!
-#echo "   Scheduler PID: $SCHED_PID"
+# Pre-warm cache so first visitor gets instant results.
+# Runs in background — Streamlit starts immediately,
+# but cache will be ready within ~60s for the first tab click.
+echo "   Pre-warming cache in background…"
+python scripts/warm_cache.py &
 
 # Launch Streamlit dashboard (foreground — keeps container alive)
 echo "   Launching dashboard on :8501"
