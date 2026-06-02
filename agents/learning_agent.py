@@ -16,7 +16,7 @@ if not logger.handlers:
 
 CACHE_DIR    = Path(__file__).resolve().parents[1] / "data" / "cache"
 HISTORY_FILE = Path(__file__).resolve().parents[1] / "data" / "reports" / "signal_history.json"
-CACHE_TTL    = 3600  # 1 hour
+CACHE_TTL    = 86400  # full day — one AI call per tab per day
 
 
 class LearningAgent:

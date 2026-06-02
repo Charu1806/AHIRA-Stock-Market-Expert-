@@ -15,7 +15,7 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 CACHE_DIR = Path(__file__).resolve().parents[1] / "data" / "cache"
-CACHE_TTL  = 3600  # 1 hour
+CACHE_TTL  = 86400  # full day — one AI call per tab per day
 
 # Max headlines injected per prompt — keeps prompt under ~800 tokens
 _MAX_HEADLINES = 12

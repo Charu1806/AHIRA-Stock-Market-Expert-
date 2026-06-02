@@ -222,10 +222,11 @@ _inject_css(_THEMES[st.session_state.theme])
 T = _THEMES[st.session_state.theme]   # shorthand used throughout
 
 # ── Imports (after path setup) ─────────────────────────────────────────────
-from agents.news_agent     import NewsAgent
-from agents.stock_agent    import StockAgent
-from agents.learning_agent import LearningAgent
+from agents.news_agent      import NewsAgent
+from agents.stock_agent     import StockAgent
+from agents.learning_agent  import LearningAgent
 from fetchers.price_fetcher import PriceFetcher
+from utils.disk_cache       import is_cached_today, load_tab, cache_written_at
 
 # ── Spinner messages ───────────────────────────────────────────────────────
 _SPINNERS = [
@@ -274,6 +275,16 @@ def _clear_all(period: str):
     for t in _TAB_KEYS:
         _clear(t, period)
 
+def _bust_disk_cache(period: str, tab: str | None = None, all_tabs: bool = False):
+    """Delete today's disk cache files so the next load calls the AI fresh."""
+    from utils.disk_cache import CACHE_DIR, _tab_keys, today
+    targets = _TAB_KEYS if all_tabs else ([tab] if tab else [])
+    for t in targets:
+        for key in _tab_keys(t, period):
+            p = CACHE_DIR / f"{key}.json"
+            if p.exists():
+                p.unlink(missing_ok=True)
+
 # ── Snapshot (short TTL — use st.cache_data) ──────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_snapshot() -> dict:
@@ -302,6 +313,42 @@ _LOAD_STEPS = {
                      "✍️  Crafting lesson with India & US angles…",
                      "✅ Done"],
 }
+
+def _cache_badge(tab: str, period: str) -> None:
+    """Show a subtle 'Loaded from today's cache' pill."""
+    at = cache_written_at(tab, period)
+    st.html(
+        f'<div style="display:inline-flex;align-items:center;gap:5px;'
+        f'background:rgba(45,164,78,0.1);border:1px solid rgba(45,164,78,0.3);'
+        f'border-radius:20px;padding:3px 10px;font-size:0.72rem;color:#2da44e;margin-bottom:12px">'
+        f'📦 Cached · Generated today at {at} · '
+        f'<span style="opacity:0.7">Refresh to call AI again</span></div>'
+    )
+
+def _smart_load(tab: str, period: str, fn) -> dict:
+    """
+    Load order:
+    1. session_state  (instant — same browser session)
+    2. disk cache     (fast — today's JSON file, no AI call)
+    3. AI call        (slow — shows step-by-step loader)
+    """
+    # 1. Already in memory this session
+    if _is_loaded(tab, period):
+        return _get(tab, period)
+
+    # 2. Today's disk cache exists — load it silently
+    if is_cached_today(tab, period):
+        data = load_tab(tab, period)
+        if data:
+            data["_from_cache"] = True
+            _store(tab, period, data)
+            return data
+
+    # 3. Call AI with loader
+    result = _run_with_loader(tab, period, fn)
+    result["_from_cache"] = False
+    _store(tab, period, result)
+    return result
 
 def _run_with_loader(tab: str, period: str, fn) -> dict:
     """Run fn() while showing a step-by-step progress loader."""
@@ -414,21 +461,22 @@ with st.sidebar:
     run_all = st.button("🚀 Run Full Analysis", type="primary", width="stretch")
     if run_all:
         _clear_all(period)
+        _bust_disk_cache(period, all_tabs=True)
         fetch_snapshot.clear()
         st.rerun()
 
     st.divider()
     st.markdown("**Refresh individual tabs:**")
     if st.button("🌐 Refresh World News",   width="stretch"):
-        _clear("news_world",   period); st.rerun()
+        _clear("news_world",   period); _bust_disk_cache(period, "news_world"); st.rerun()
     if st.button("🇮🇳 Refresh India News",  width="stretch"):
-        _clear("india_news",   period); st.rerun()
+        _clear("india_news",   period); _bust_disk_cache(period, "india_news"); st.rerun()
     if st.button("📈 Refresh US Stocks",    width="stretch"):
-        _clear("us_stocks",    period); st.rerun()
+        _clear("us_stocks",    period); _bust_disk_cache(period, "us_stocks"); st.rerun()
     if st.button("📉 Refresh India Stocks", width="stretch"):
-        _clear("india_stocks", period); st.rerun()
+        _clear("india_stocks", period); _bust_disk_cache(period, "india_stocks"); st.rerun()
     if st.button("🎓 Refresh Lesson",       width="stretch"):
-        _clear("lesson",       period); st.rerun()
+        _clear("lesson",       period); _bust_disk_cache(period, "lesson"); st.rerun()
 
     st.divider()
     # Provider status
@@ -523,19 +571,14 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ──────────────────────────────────────────────────────────────────────────
 with tab1:
     # Lazy load — only call AI on first visit; instant on tab switch
-    if not _is_loaded("news_world", period):
-        def _load_world():
-            na = NewsAgent()
-            us   = na.analyse_us_news(period)
-            gl   = na.analyse_global_news(period)
-            return {"us": us, "global": gl}
-        try:
-            _store("news_world", period, _run_with_loader("news_world", period, _load_world))
-        except Exception as e:
-            st.error(f"❌ Failed to load World News: {e}")
-            st.stop()
-
-    world = _get("news_world", period) or {}
+    def _load_world():
+        na = NewsAgent()
+        return {"us": na.analyse_us_news(period), "global": na.analyse_global_news(period)}
+    try:
+        world = _smart_load("news_world", period, _load_world)
+    except Exception as e:
+        st.error(f"❌ Failed to load World News: {e}"); st.stop()
+    if world.get("_from_cache"): _cache_badge("news_world", period)
     us_data = world.get("us", {})
     gl_data = world.get("global", {})
 
@@ -655,17 +698,13 @@ with tab1:
 # TAB 2 — India News
 # ──────────────────────────────────────────────────────────────────────────
 with tab2:
-    if not _is_loaded("india_news", period):
-        def _load_india():
-            na = NewsAgent()
-            return na.analyse_india_news(period)
-        try:
-            _store("india_news", period, _run_with_loader("india_news", period, _load_india))
-        except Exception as e:
-            st.error(f"❌ Failed to load India news: {e}")
-            st.stop()
-
-    in_data = _get("india_news", period) or {}
+    def _load_india():
+        return NewsAgent().analyse_india_news(period)
+    try:
+        in_data = _smart_load("india_news", period, _load_india)
+    except Exception as e:
+        st.error(f"❌ Failed to load India news: {e}"); st.stop()
+    if in_data.get("_from_cache"): _cache_badge("india_news", period)
     st.markdown("#### 🇮🇳 India Market Analysis")
 
     fii = in_data.get("fii_dii_summary","")
@@ -730,16 +769,13 @@ with tab2:
 # TAB 3 — US Watchlist
 # ──────────────────────────────────────────────────────────────────────────
 with tab3:
-    if not _is_loaded("us_stocks", period):
-        def _load_us_wl():
-            return StockAgent().get_us_watchlist(period)
-        try:
-            _store("us_stocks", period, _run_with_loader("us_stocks", period, _load_us_wl))
-        except Exception as e:
-            st.error(f"❌ Failed to load US watchlist: {e}")
-            st.stop()
-
-    us_wl = _get("us_stocks", period) or {}
+    def _load_us_wl():
+        return StockAgent().get_us_watchlist(period)
+    try:
+        us_wl = _smart_load("us_stocks", period, _load_us_wl)
+    except Exception as e:
+        st.error(f"❌ Failed to load US watchlist: {e}"); st.stop()
+    if us_wl.get("_from_cache"): _cache_badge("us_stocks", period)
     st.markdown("#### 📈 US Stocks Watchlist — ARIA's Picks")
 
     macro_ctx = us_wl.get("macro_context","")
@@ -832,16 +868,13 @@ with tab3:
 # TAB 4 — India Watchlist
 # ──────────────────────────────────────────────────────────────────────────
 with tab4:
-    if not _is_loaded("india_stocks", period):
-        def _load_india_wl():
-            return StockAgent().get_india_watchlist(period)
-        try:
-            _store("india_stocks", period, _run_with_loader("india_stocks", period, _load_india_wl))
-        except Exception as e:
-            st.error(f"❌ Failed to load India watchlist: {e}")
-            st.stop()
-
-    in_wl = _get("india_stocks", period) or {}
+    def _load_india_wl():
+        return StockAgent().get_india_watchlist(period)
+    try:
+        in_wl = _smart_load("india_stocks", period, _load_india_wl)
+    except Exception as e:
+        st.error(f"❌ Failed to load India watchlist: {e}"); st.stop()
+    if in_wl.get("_from_cache"): _cache_badge("india_stocks", period)
     st.markdown("#### 📉 India Stocks Watchlist — ARIA's Picks")
 
     # Nifty view badge
@@ -962,16 +995,13 @@ with tab4:
 # TAB 5 — Learning of the Day
 # ──────────────────────────────────────────────────────────────────────────
 with tab5:
-    if not _is_loaded("lesson", period):
-        def _load_lesson():
-            return LearningAgent().get_daily_lesson()
-        try:
-            _store("lesson", period, _run_with_loader("lesson", period, _load_lesson))
-        except Exception as e:
-            st.error(f"❌ Failed to load lesson: {e}")
-            st.stop()
-
-    lesson = _get("lesson", period) or {}
+    def _load_lesson():
+        return LearningAgent().get_daily_lesson()
+    try:
+        lesson = _smart_load("lesson", period, _load_lesson)
+    except Exception as e:
+        st.error(f"❌ Failed to load lesson: {e}"); st.stop()
+    if lesson.get("_from_cache"): _cache_badge("lesson", period)
     st.markdown("#### 🎓 Learning of the Day")
 
     diff = lesson.get("difficulty","intermediate")
