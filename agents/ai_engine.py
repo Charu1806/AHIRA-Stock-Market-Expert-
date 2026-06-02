@@ -313,19 +313,13 @@ class AIEngine:
     async def _call_anthropic(self, client, prompt: str, max_tokens: int) -> str:
         loop = asyncio.get_event_loop()
         try:
-            # Prefill the assistant turn with "{" — forces Claude to start JSON immediately,
-            # preventing any preamble text that breaks JSON parsing.
             resp = await loop.run_in_executor(None, lambda: client.messages.create(
                 model=PROVIDER_META["anthropic"]["model"],
                 max_tokens=max_tokens,
                 system=ARIA_SYSTEM_PROMPT,
-                messages=[
-                    {"role": "user",      "content": prompt},
-                    {"role": "assistant", "content": "{"},   # prefill
-                ],
+                messages=[{"role": "user", "content": prompt}],
             ))
-            # Prepend the prefill character we consumed
-            return "{" + resp.content[0].text
+            return resp.content[0].text
         except Exception as e:
             msg = str(e)
             if "429" in msg or "rate" in msg.lower() or "overloaded" in msg.lower():

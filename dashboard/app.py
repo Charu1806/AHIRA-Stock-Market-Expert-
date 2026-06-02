@@ -95,7 +95,7 @@ _THEMES: dict[str, dict] = {
 
 # ── Theme state (must happen before sidebar is drawn) ──────────────────────
 if "theme" not in st.session_state:
-    st.session_state.theme = "Dark"
+    st.session_state.theme = "Light"
 
 # ── Inject CSS for active theme ────────────────────────────────────────────
 def _inject_css(t: dict) -> None:
