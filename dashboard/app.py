@@ -99,7 +99,7 @@ if "theme" not in st.session_state:
 
 # ── Inject CSS for active theme ────────────────────────────────────────────
 def _inject_css(t: dict) -> None:
-    st.markdown(f"""
+    st.html(f"""
 <style>
 html, body, [data-testid="stAppViewContainer"] {{
     background-color: {t['bg']} !important;
@@ -216,7 +216,7 @@ hr {{ border-color: {t['border']} !important; }}
 }}
 .aria-sub {{ font-size: 0.75rem; color: {t['text_muted']}; margin-top: -4px; }}
 </style>
-""", unsafe_allow_html=True)
+""")
 
 _inject_css(_THEMES[st.session_state.theme])
 T = _THEMES[st.session_state.theme]   # shorthand used throughout
@@ -326,8 +326,8 @@ def _snap_card(label: str, data: dict) -> str:
 # ══════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown('<div class="aria-logo">🤖 ARIA</div>', unsafe_allow_html=True)
-    st.markdown('<div class="aria-sub">Autonomous Research &amp; Investment Agent</div>', unsafe_allow_html=True)
+    st.html('<div class="aria-logo">🤖 ARIA</div>')
+    st.html('<div class="aria-sub">Autonomous Research &amp; Investment Agent</div>')
 
     # ── Theme toggle ──
     new_theme = st.radio(
@@ -340,21 +340,21 @@ with st.sidebar:
         st.session_state.theme = new_theme
         st.rerun()
 
-    st.markdown("---")
+    st.html("---")
 
     period_label  = st.selectbox("Period", list(_PERIOD_MAP.keys()), index=0)
     period        = _PERIOD_MAP[period_label]
     source_filter = st.selectbox("Sources", ["All", "US Sources", "India Sources", "Global"])
 
-    st.markdown("---")
+    st.html("---")
     run_all = st.button("🚀 Run Full Analysis", type="primary", use_container_width=True)
 
     if run_all:
         st.cache_data.clear()
         st.rerun()
 
-    st.markdown("---")
-    st.markdown("**Refresh individual tabs:**")
+    st.html("---")
+    st.html("**Refresh individual tabs:**")
     ref_us     = st.button("🇺🇸 Refresh US News",     use_container_width=True)
     ref_global = st.button("🌍 Refresh Global News",   use_container_width=True)
     ref_india  = st.button("🇮🇳 Refresh India News",   use_container_width=True)
@@ -369,33 +369,31 @@ with st.sidebar:
     if ref_in_wl:  fetch_india_watchlist.clear(); st.rerun()
     if ref_lesson: fetch_lesson.clear();       st.rerun()
 
-    st.markdown("---")
+    st.html("---")
     # Provider status
     try:
         from agents.ai_engine import AIEngine
         _eng = AIEngine()
         _prov = _eng.active_provider or "none"
         _dot_color = "#2da44e" if _prov == "groq" else T["accent"] if _prov == "gemini" else T["text_muted"]
-        st.markdown(
+        st.html(
             f'<div style="font-size:0.8rem;color:{T["text_muted"]}">AI Provider &nbsp;'
             f'<span style="color:{_dot_color}">●</span> '
             f'<strong style="color:{T["text"]}">{_prov.upper()}</strong></div>',
-            unsafe_allow_html=True,
         )
     except Exception:
-        st.markdown('<div style="font-size:0.8rem;color:#da3633">● No provider configured</div>', unsafe_allow_html=True)
+        st.html('<div style="font-size:0.8rem;color:#da3633">● No provider configured</div>')
 
-    st.markdown(
+    st.html(
         f'<div style="font-size:0.75rem;color:{T["text_muted"]};margin-top:6px">'
         f'Last refreshed: {datetime.now().strftime("%H:%M:%S")}</div>',
-        unsafe_allow_html=True,
     )
 
 # ══════════════════════════════════════════════════════════════════════════
 # TOP ROW — Market Snapshot
 # ══════════════════════════════════════════════════════════════════════════
 
-st.markdown("### Live Markets")
+st.html("### Live Markets")
 
 with st.spinner("Fetching market levels..."):
     snap = fetch_snapshot()
@@ -413,9 +411,9 @@ snap_items = [
     ("INDIA VIX", india_snap.get("INDIA VIX", {})),
 ]
 for col, (label, data) in zip(cols, snap_items):
-    col.markdown(_snap_card(label, data), unsafe_allow_html=True)
+    st.html(_snap_card(label, data))
 
-st.markdown("---")
+st.html("---")
 
 # ══════════════════════════════════════════════════════════════════════════
 # TABS
@@ -434,7 +432,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # TAB 1 — US News
 # ──────────────────────────────────────────────────────────────────────────
 with tab1:
-    st.markdown("#### 🇺🇸 US Market News Analysis")
+    st.html("#### 🇺🇸 US Market News Analysis")
     with st.spinner(_spin()):
         try:
             us_data = fetch_us_news(period)
@@ -444,19 +442,18 @@ with tab1:
 
     mood = us_data.get("macro_mood", "mixed")
     mood_color = {"risk_on": "#2da44e", "risk_off": "#cf222e", "mixed": T["hld_fg"]}.get(mood, T["text_muted"])
-    st.markdown(
+    st.html(
         f'<div style="margin-bottom:14px">'
         f'Macro mood: <span style="color:{mood_color};font-weight:700">{mood.replace("_"," ").upper()}</span>'
         f'&nbsp;·&nbsp;<span style="color:{T["text_muted"]};font-size:0.85rem">{us_data.get("sector_rotation","")}</span>'
         f'</div>',
-        unsafe_allow_html=True,
     )
 
     for story in us_data.get("stories", []):
         border = _story_border(story)
         impacts = story.get("impacted_stocks", [])
         with st.container():
-            st.markdown(
+            st.html(
                 f'<div class="aria-card {border}">'
                 f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
                 f'<span style="font-size:1.05rem;font-weight:700">{story.get("headline","")}</span>'
@@ -465,7 +462,6 @@ with tab1:
                 f'</div>'
                 f'<div style="color:{T["text_body"]};font-size:0.88rem;line-height:1.55">{story.get("summary","")}</div>'
                 f'</div>',
-                unsafe_allow_html=True,
             )
             if impacts:
                 with st.expander(f"📊 Stock Impact ({len(impacts)} stocks)"):
@@ -475,7 +471,7 @@ with tab1:
                         clr  = {"bullish":"#2da44e","bearish":"#cf222e","neutral":T["text_muted"]}.get(sig, T["text_muted"])
                         pct  = imp.get("impact_pct", 0)
                         with i_cols[idx % len(i_cols)]:
-                            st.markdown(
+                            st.html(
                                 f'<div class="aria-card" style="padding:10px 14px">'
                                 f'<div style="font-size:1.1rem;font-weight:800;color:{T["text"]}">{imp.get("ticker","")}</div>'
                                 f'<div style="color:{T["text_muted"]};font-size:0.78rem;margin-bottom:6px">{imp.get("company","")}</div>'
@@ -483,17 +479,16 @@ with tab1:
                                 f'<span style="color:{clr};font-weight:700">{pct:+.1f}%</span></div>'
                                 f'<div style="font-size:0.8rem;color:{T["text_body"]};margin-top:6px">{imp.get("why","")}</div>'
                                 f'</div>',
-                                unsafe_allow_html=True,
                             )
             take = story.get("aria_take","")
             if take:
-                st.markdown(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>', unsafe_allow_html=True)
+                st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
 # TAB 2 — Global News
 # ──────────────────────────────────────────────────────────────────────────
 with tab2:
-    st.markdown("#### 🌍 Global Macro Analysis")
+    st.html("#### 🌍 Global Macro Analysis")
     with st.spinner(_spin()):
         try:
             gl_data = fetch_global_news(period)
@@ -511,7 +506,7 @@ with tab2:
     for story in gl_data.get("stories", []):
         cmi = story.get("cross_market_impact", {})
         with st.container():
-            st.markdown(
+            st.html(
                 f'<div class="aria-card neutral">'
                 f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
                 f'<span style="font-size:1.05rem;font-weight:700">{story.get("headline","")}</span>'
@@ -526,17 +521,16 @@ with tab2:
                 f'<div class="cross-cell"><div class="cross-label">💱 CURRENCIES</div>{cmi.get("currencies","—")}</div>'
                 f'</div>'
                 f'</div>',
-                unsafe_allow_html=True,
             )
             take = story.get("aria_take","")
             if take:
-                st.markdown(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>', unsafe_allow_html=True)
+                st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
 # TAB 3 — India News
 # ──────────────────────────────────────────────────────────────────────────
 with tab3:
-    st.markdown("#### 🇮🇳 India Market Analysis")
+    st.html("#### 🇮🇳 India Market Analysis")
     with st.spinner(_spin()):
         try:
             in_data = fetch_india_news(period)
@@ -550,33 +544,30 @@ with tab3:
     if fii or nifty_pulse:
         fc1, fc2 = st.columns(2)
         if fii:
-            fc1.markdown(
+            st.html(
                 f'<div class="aria-card" style="padding:10px 14px">'
                 f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600">FII/DII FLOW TREND</div>'
                 f'<div style="font-size:0.88rem;margin-top:4px">{fii}</div>'
                 f'</div>',
-                unsafe_allow_html=True,
             )
         if nifty_pulse:
-            fc2.markdown(
+            st.html(
                 f'<div class="aria-card" style="padding:10px 14px">'
                 f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600">NIFTY PULSE</div>'
                 f'<div style="font-size:0.88rem;margin-top:4px">{nifty_pulse}</div>'
                 f'</div>',
-                unsafe_allow_html=True,
             )
         rupee = in_data.get("rupee_view","")
         if rupee:
-            st.markdown(
+            st.html(
                 f'<div style="color:{T["text_muted"]};font-size:0.82rem;margin-bottom:14px">💱 Rupee: {rupee}</div>',
-                unsafe_allow_html=True,
             )
 
     for story in in_data.get("stories", []):
         border = _story_border(story)
         impacts = story.get("impacted_stocks", [])
         with st.container():
-            st.markdown(
+            st.html(
                 f'<div class="aria-card {border}">'
                 f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
                 f'<span style="font-size:1.05rem;font-weight:700">{story.get("headline","")}</span>'
@@ -585,7 +576,6 @@ with tab3:
                 f'</div>'
                 f'<div style="color:{T["text_body"]};font-size:0.88rem;line-height:1.55">{story.get("summary","")}</div>'
                 f'</div>',
-                unsafe_allow_html=True,
             )
             if impacts:
                 with st.expander(f"📊 Stock Impact ({len(impacts)} stocks)"):
@@ -595,7 +585,7 @@ with tab3:
                         clr = {"bullish":"#2da44e","bearish":"#cf222e","neutral":T["text_muted"]}.get(sig, T["text_muted"])
                         pct = imp.get("impact_pct", 0)
                         with i_cols[idx % len(i_cols)]:
-                            st.markdown(
+                            st.html(
                                 f'<div class="aria-card" style="padding:10px 14px">'
                                 f'<div style="font-size:1.1rem;font-weight:800;color:{T["text"]}">{imp.get("ticker","")}</div>'
                                 f'<div style="color:{T["text_muted"]};font-size:0.78rem;margin-bottom:6px">{imp.get("company","")}</div>'
@@ -603,17 +593,16 @@ with tab3:
                                 f'<span style="color:{clr};font-weight:700">{pct:+.1f}%</span></div>'
                                 f'<div style="font-size:0.8rem;color:{T["text_body"]};margin-top:6px">{imp.get("why","")}</div>'
                                 f'</div>',
-                                unsafe_allow_html=True,
                             )
             take = story.get("aria_take","")
             if take:
-                st.markdown(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>', unsafe_allow_html=True)
+                st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
 # TAB 4 — US Watchlist
 # ──────────────────────────────────────────────────────────────────────────
 with tab4:
-    st.markdown("#### 📈 US Stocks Watchlist — ARIA's Picks")
+    st.html("#### 📈 US Stocks Watchlist — ARIA's Picks")
     with st.spinner(_spin()):
         try:
             us_wl = fetch_us_watchlist(period)
@@ -623,7 +612,7 @@ with tab4:
 
     macro_ctx = us_wl.get("macro_context","")
     if macro_ctx:
-        st.markdown(f'<div style="color:{T["text_muted"]};font-size:0.88rem;margin-bottom:16px">{macro_ctx}</div>', unsafe_allow_html=True)
+        st.html(f'<div style="color:{T["text_muted"]};font-size:0.88rem;margin-bottom:16px">{macro_ctx}</div>')
 
     up_col, dn_col = st.columns(2)
 
@@ -665,18 +654,18 @@ with tab4:
         )
 
     with up_col:
-        st.markdown(f'<div style="color:#2da44e;font-weight:700;font-size:1rem;margin-bottom:10px">▲ TRENDING UP</div>', unsafe_allow_html=True)
+        st.html(f'<div style="color:#2da44e;font-weight:700;font-size:1rem;margin-bottom:10px">▲ TRENDING UP</div>')
         for s in us_wl.get("trending_up", []):
-            st.markdown(_stock_card(s, "up"), unsafe_allow_html=True)
+            st.html(_stock_card(s, "up"))
 
     with dn_col:
-        st.markdown(f'<div style="color:#cf222e;font-weight:700;font-size:1rem;margin-bottom:10px">▼ TRENDING DOWN</div>', unsafe_allow_html=True)
+        st.html(f'<div style="color:#cf222e;font-weight:700;font-size:1rem;margin-bottom:10px">▼ TRENDING DOWN</div>')
         for s in us_wl.get("trending_down", []):
-            st.markdown(_stock_card(s, "down"), unsafe_allow_html=True)
+            st.html(_stock_card(s, "down"))
 
     # Bar chart
-    st.markdown("---")
-    st.markdown("##### Estimated Move Summary")
+    st.html("---")
+    st.html("##### Estimated Move Summary")
     all_stocks = [
         {"Ticker": s["ticker"], "Est Change %": s.get("est_change",0), "Direction": "Up"}
         for s in us_wl.get("trending_up", [])
@@ -705,13 +694,13 @@ with tab4:
 
     summary = us_wl.get("aria_summary","")
     if summary:
-        st.markdown(f'<div class="aria-take">💡 <strong>ARIA:</strong> {summary}</div>', unsafe_allow_html=True)
+        st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {summary}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
 # TAB 5 — India Watchlist
 # ──────────────────────────────────────────────────────────────────────────
 with tab5:
-    st.markdown("#### 📉 India Stocks Watchlist — ARIA's Picks")
+    st.html("#### 📉 India Stocks Watchlist — ARIA's Picks")
     with st.spinner(_spin()):
         try:
             in_wl = fetch_india_watchlist(period)
@@ -729,30 +718,27 @@ with tab5:
     macro_ctx_in = in_wl.get("macro_context","")
 
     hc1, hc2, hc3 = st.columns(3)
-    hc1.markdown(
+    st.html(
         f'<div class="aria-card" style="padding:10px 14px;text-align:center">'
         f'<div style="color:{T["text_muted"]};font-size:0.72rem">NIFTY VIEW</div>'
         f'<div style="margin-top:4px">{_badge(nv, nv_key)}</div>'
         f'</div>',
-        unsafe_allow_html=True,
     )
-    hc2.markdown(
+    st.html(
         f'<div class="aria-card" style="padding:10px 14px;text-align:center">'
         f'<div style="color:{T["text_muted"]};font-size:0.72rem">TARGET / SUPPORT</div>'
         f'<div style="color:#2ea043;font-weight:700">{nt}</div>'
         f'<div style="color:#da3633;font-size:0.8rem">{ns}</div>'
         f'</div>',
-        unsafe_allow_html=True,
     )
-    hc3.markdown(
+    st.html(
         f'<div class="aria-card" style="padding:10px 14px">'
         f'<div style="color:{T["text_muted"]};font-size:0.72rem">FII/DII</div>'
         f'<div style="font-size:0.82rem;margin-top:4px">{fii_note}</div>'
         f'</div>',
-        unsafe_allow_html=True,
     )
     if macro_ctx_in:
-        st.markdown(f'<div style="color:{T["text_muted"]};font-size:0.88rem;margin:12px 0">{macro_ctx_in}</div>', unsafe_allow_html=True)
+        st.html(f'<div style="color:{T["text_muted"]};font-size:0.88rem;margin:12px 0">{macro_ctx_in}</div>')
 
     up_col_i, dn_col_i = st.columns(2)
 
@@ -794,18 +780,18 @@ with tab5:
         )
 
     with up_col_i:
-        st.markdown('<div style="color:#2ea043;font-weight:700;font-size:1rem;margin-bottom:10px">▲ TRENDING UP</div>', unsafe_allow_html=True)
+        st.html('<div style="color:#2ea043;font-weight:700;font-size:1rem;margin-bottom:10px">▲ TRENDING UP</div>')
         for s in in_wl.get("trending_up", []):
-            st.markdown(_india_card(s, "up"), unsafe_allow_html=True)
+            st.html(_india_card(s, "up"))
 
     with dn_col_i:
-        st.markdown('<div style="color:#da3633;font-weight:700;font-size:1rem;margin-bottom:10px">▼ TRENDING DOWN</div>', unsafe_allow_html=True)
+        st.html('<div style="color:#da3633;font-weight:700;font-size:1rem;margin-bottom:10px">▼ TRENDING DOWN</div>')
         for s in in_wl.get("trending_down", []):
-            st.markdown(_india_card(s, "down"), unsafe_allow_html=True)
+            st.html(_india_card(s, "down"))
 
     # Bar chart
-    st.markdown("---")
-    st.markdown("##### Estimated Move Summary")
+    st.html("---")
+    st.html("##### Estimated Move Summary")
     all_india = [
         {"Ticker": s["ticker"].replace(".NS",""), "Est Change %": s.get("est_change",0), "Direction": "Up"}
         for s in in_wl.get("trending_up", [])
@@ -834,13 +820,13 @@ with tab5:
 
     summary_in = in_wl.get("aria_summary","")
     if summary_in:
-        st.markdown(f'<div class="aria-take">💡 <strong>ARIA:</strong> {summary_in}</div>', unsafe_allow_html=True)
+        st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {summary_in}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
 # TAB 6 — Learning of the Day
 # ──────────────────────────────────────────────────────────────────────────
 with tab6:
-    st.markdown("#### 🎓 Learning of the Day")
+    st.html("#### 🎓 Learning of the Day")
     with st.spinner(_spin()):
         try:
             lesson = fetch_lesson()
@@ -849,7 +835,7 @@ with tab6:
             st.stop()
 
     diff = lesson.get("difficulty","intermediate")
-    st.markdown(
+    st.html(
         f'<div style="margin-bottom:18px">'
         f'<div style="font-size:1.8rem;font-weight:800;color:{T["accent"]};margin-bottom:6px">'
         f'{lesson.get("concept","")}</div>'
@@ -859,7 +845,6 @@ with tab6:
         f'<span style="color:{T["text_muted"]};font-size:0.82rem;margin-left:8px">'
         f'via {lesson.get("_provider","AI")}</span>'
         f'</div>',
-        unsafe_allow_html=True,
     )
 
     # Relevance
@@ -870,7 +855,7 @@ with tab6:
     # Explanation
     expl = lesson.get("explanation", {})
     if expl:
-        st.markdown(
+        st.html(
             f'<div class="aria-card" style="margin-bottom:14px">'
             f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600;margin-bottom:8px">EXPLANATION</div>'
             f'<div style="margin-bottom:10px"><strong style="color:{T["accent"]}">Core idea</strong><br>'
@@ -880,19 +865,17 @@ with tab6:
             f'<div><strong style="color:{T["accent"]}">Why it matters right now</strong><br>'
             f'<span style="color:{T["text_body"]};font-size:0.9rem">{expl.get("why_it_matters_now","")}</span></div>'
             f'</div>',
-            unsafe_allow_html=True,
         )
 
     # Real example
     ex = lesson.get("real_example", {})
     if ex:
-        st.markdown(
+        st.html(
             f'<div class="example-card" style="margin-bottom:14px">'
             f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600;margin-bottom:6px">📰 REAL EXAMPLE</div>'
             f'<div style="font-weight:700;color:{T["text"]};margin-bottom:8px">{ex.get("title","")}</div>'
             f'<div style="color:{T["text_body"]};font-size:0.88rem;line-height:1.6">{ex.get("body","")}</div>'
             f'</div>',
-            unsafe_allow_html=True,
         )
 
     # India / US angles
@@ -900,47 +883,43 @@ with tab6:
     india_angle = lesson.get("india_angle","")
     us_angle    = lesson.get("us_angle","")
     if india_angle:
-        a_col.markdown(
+        st.html(
             f'<div class="aria-card" style="padding:12px 16px">'
             f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600;margin-bottom:6px">🇮🇳 INDIA ANGLE</div>'
             f'<div style="color:{T["text_body"]};font-size:0.88rem">{india_angle}</div>'
             f'</div>',
-            unsafe_allow_html=True,
         )
     if us_angle:
-        b_col.markdown(
+        st.html(
             f'<div class="aria-card" style="padding:12px 16px">'
             f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600;margin-bottom:6px">🇺🇸 US ANGLE</div>'
             f'<div style="color:{T["text_body"]};font-size:0.88rem">{us_angle}</div>'
             f'</div>',
-            unsafe_allow_html=True,
         )
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.html("<br>")
 
     # Takeaway + Mistake
     t_col, m_col = st.columns(2)
     takeaway = lesson.get("takeaway","")
     mistake  = lesson.get("common_mistake","")
     if takeaway:
-        t_col.markdown(
+        st.html(
             f'<div class="takeaway-box">'
             f'<strong>✅ Key Takeaway</strong><br><br>{takeaway}'
             f'</div>',
-            unsafe_allow_html=True,
         )
     if mistake:
-        m_col.markdown(
+        st.html(
             f'<div class="mistake-box">'
             f'<strong>❌ Common Mistake</strong><br><br>{mistake}'
             f'</div>',
-            unsafe_allow_html=True,
         )
 
     # Next steps
     steps = lesson.get("next_steps",[])
     if steps:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("**Next steps:**")
+        st.html("<br>")
+        st.html("**Next steps:**")
         for step in steps:
-            st.markdown(f"→ {step}")
+            st.html(f"→ {step}")

@@ -6,7 +6,7 @@ yfinance
 requests
 python-dotenv
 schedule
-streamlit
+streamlit>=1.31.0
 pandas
 plotly
 python-telegram-bot
