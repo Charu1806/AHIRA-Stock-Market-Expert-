@@ -186,17 +186,20 @@ class PriceFetcher:
             if time.time() - cache_path.stat().st_mtime < CACHE_TTL_PRICE:
                 return json.loads(cache_path.read_text())
 
-        info = yf.Ticker(ticker).info
+        # Use Yahoo Finance chart API directly — much faster than yf.Ticker().info
+        # and works reliably on cloud servers (no cookie/consent issues)
+        import requests as _req
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/"
+            f"{_req.utils.quote(ticker, safe='')}?interval=1d&range=2d"
+        )
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; ARIA-bot/1.0)"}
+        resp = _req.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        meta = resp.json()["chart"]["result"][0]["meta"]
 
-        def _get(*keys, default=None):
-            for k in keys:
-                v = info.get(k)
-                if v is not None:
-                    return v
-            return default
-
-        current = _get("regularMarketPrice", "currentPrice", "previousClose")
-        prev    = _get("regularMarketPreviousClose", "previousClose")
+        current = meta.get("regularMarketPrice") or meta.get("previousClose")
+        prev    = meta.get("previousClose") or meta.get("chartPreviousClose")
         change_pct = (
             round((current - prev) / prev * 100, 2)
             if current and prev and prev != 0 else None

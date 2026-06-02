@@ -340,21 +340,21 @@ with st.sidebar:
         st.session_state.theme = new_theme
         st.rerun()
 
-    st.html("---")
+    st.divider()
 
     period_label  = st.selectbox("Period", list(_PERIOD_MAP.keys()), index=0)
     period        = _PERIOD_MAP[period_label]
     source_filter = st.selectbox("Sources", ["All", "US Sources", "India Sources", "Global"])
 
-    st.html("---")
+    st.divider()
     run_all = st.button("🚀 Run Full Analysis", type="primary", use_container_width=True)
 
     if run_all:
         st.cache_data.clear()
         st.rerun()
 
-    st.html("---")
-    st.html("**Refresh individual tabs:**")
+    st.divider()
+    st.markdown("**Refresh individual tabs:**")
     ref_us     = st.button("🇺🇸 Refresh US News",     use_container_width=True)
     ref_global = st.button("🌍 Refresh Global News",   use_container_width=True)
     ref_india  = st.button("🇮🇳 Refresh India News",   use_container_width=True)
@@ -369,7 +369,7 @@ with st.sidebar:
     if ref_in_wl:  fetch_india_watchlist.clear(); st.rerun()
     if ref_lesson: fetch_lesson.clear();       st.rerun()
 
-    st.html("---")
+    st.divider()
     # Provider status
     try:
         from agents.ai_engine import AIEngine
@@ -393,7 +393,7 @@ with st.sidebar:
 # TOP ROW — Market Snapshot
 # ══════════════════════════════════════════════════════════════════════════
 
-st.html("### Live Markets")
+st.markdown("### Live Markets")
 
 with st.spinner("Fetching market levels..."):
     snap = fetch_snapshot()
@@ -411,9 +411,9 @@ snap_items = [
     ("INDIA VIX", india_snap.get("INDIA VIX", {})),
 ]
 for col, (label, data) in zip(cols, snap_items):
-    st.html(_snap_card(label, data))
+    col.html(_snap_card(label, data))
 
-st.html("---")
+st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════
 # TABS
@@ -432,7 +432,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # TAB 1 — US News
 # ──────────────────────────────────────────────────────────────────────────
 with tab1:
-    st.html("#### 🇺🇸 US Market News Analysis")
+    st.markdown("#### 🇺🇸 US Market News Analysis")
     with st.spinner(_spin()):
         try:
             us_data = fetch_us_news(period)
@@ -488,7 +488,7 @@ with tab1:
 # TAB 2 — Global News
 # ──────────────────────────────────────────────────────────────────────────
 with tab2:
-    st.html("#### 🌍 Global Macro Analysis")
+    st.markdown("#### 🌍 Global Macro Analysis")
     with st.spinner(_spin()):
         try:
             gl_data = fetch_global_news(period)
@@ -530,7 +530,7 @@ with tab2:
 # TAB 3 — India News
 # ──────────────────────────────────────────────────────────────────────────
 with tab3:
-    st.html("#### 🇮🇳 India Market Analysis")
+    st.markdown("#### 🇮🇳 India Market Analysis")
     with st.spinner(_spin()):
         try:
             in_data = fetch_india_news(period)
@@ -602,7 +602,7 @@ with tab3:
 # TAB 4 — US Watchlist
 # ──────────────────────────────────────────────────────────────────────────
 with tab4:
-    st.html("#### 📈 US Stocks Watchlist — ARIA's Picks")
+    st.markdown("#### 📈 US Stocks Watchlist — ARIA's Picks")
     with st.spinner(_spin()):
         try:
             us_wl = fetch_us_watchlist(period)
@@ -664,8 +664,8 @@ with tab4:
             st.html(_stock_card(s, "down"))
 
     # Bar chart
-    st.html("---")
-    st.html("##### Estimated Move Summary")
+    st.divider()
+    st.markdown("##### Estimated Move Summary")
     all_stocks = [
         {"Ticker": s["ticker"], "Est Change %": s.get("est_change",0), "Direction": "Up"}
         for s in us_wl.get("trending_up", [])
@@ -700,7 +700,7 @@ with tab4:
 # TAB 5 — India Watchlist
 # ──────────────────────────────────────────────────────────────────────────
 with tab5:
-    st.html("#### 📉 India Stocks Watchlist — ARIA's Picks")
+    st.markdown("#### 📉 India Stocks Watchlist — ARIA's Picks")
     with st.spinner(_spin()):
         try:
             in_wl = fetch_india_watchlist(period)
@@ -790,8 +790,8 @@ with tab5:
             st.html(_india_card(s, "down"))
 
     # Bar chart
-    st.html("---")
-    st.html("##### Estimated Move Summary")
+    st.divider()
+    st.markdown("##### Estimated Move Summary")
     all_india = [
         {"Ticker": s["ticker"].replace(".NS",""), "Est Change %": s.get("est_change",0), "Direction": "Up"}
         for s in in_wl.get("trending_up", [])
@@ -826,7 +826,7 @@ with tab5:
 # TAB 6 — Learning of the Day
 # ──────────────────────────────────────────────────────────────────────────
 with tab6:
-    st.html("#### 🎓 Learning of the Day")
+    st.markdown("#### 🎓 Learning of the Day")
     with st.spinner(_spin()):
         try:
             lesson = fetch_lesson()
@@ -897,7 +897,7 @@ with tab6:
             f'</div>',
         )
 
-    st.html("<br>")
+    st.write("")
 
     # Takeaway + Mistake
     t_col, m_col = st.columns(2)
@@ -919,7 +919,7 @@ with tab6:
     # Next steps
     steps = lesson.get("next_steps",[])
     if steps:
-        st.html("<br>")
-        st.html("**Next steps:**")
+        st.write("")
+        st.markdown("**Next steps:**")
         for step in steps:
-            st.html(f"→ {step}")
+            st.markdown(f"→ {step}")
