@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: aria-stock-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free                    # upgrade to starter ($7/mo) for always-on
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false               # set manually in Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false               # optional: your render URL e.g. https://aria-xxx.onrender.com

@@ -1,0 +1,16 @@
+anthropic
+groq
+google-generativeai
+feedparser
+yfinance
+requests
+python-dotenv
+schedule
+streamlit
+pandas
+plotly
+python-telegram-bot
+beautifulsoup4
+httpx
+tenacity
+pydantic-settings
