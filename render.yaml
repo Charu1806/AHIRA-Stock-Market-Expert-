@@ -1,13 +1,14 @@
 services:
+  # ── Web dashboard (optional — only if you want the Streamlit UI hosted) ──
   - type: web
-    name: aria-stock-agent
+    name: aria-dashboard
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free                    # upgrade to starter ($7/mo) for always-on
+    plan: free
     healthCheckPath: /_stcore/health
     envVars:
       - key: GROQ_API_KEY
-        sync: false               # set manually in Render dashboard
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: TELEGRAM_BOT_TOKEN
@@ -15,4 +16,42 @@ services:
       - key: TELEGRAM_CHAT_ID
         sync: false
       - key: DASHBOARD_URL
-        sync: false               # optional: your render URL e.g. https://aria-xxx.onrender.com
+        sync: false
+
+  # ── Morning digest — 08:45 IST = 03:15 UTC, weekdays ─────────────────────
+  - type: cron
+    name: aria-morning-brief
+    runtime: python
+    schedule: "15 3 * * 1-5"      # Mon–Fri 03:15 UTC = 08:45 IST
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py --now --notify
+    plan: free
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+
+  # ── Evening lesson — 19:00 IST = 13:30 UTC, weekdays ─────────────────────
+  - type: cron
+    name: aria-evening-lesson
+    runtime: python
+    schedule: "30 13 * * 1-5"     # Mon–Fri 13:30 UTC = 19:00 IST
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py --evening --notify
+    plan: free
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false

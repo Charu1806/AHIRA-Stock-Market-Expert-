@@ -23,7 +23,8 @@ from agents.news_agent     import NewsAgent
 from agents.stock_agent    import StockAgent
 from agents.learning_agent import LearningAgent
 from fetchers.price_fetcher import PriceFetcher
-from notifier.telegram     import TelegramNotifier
+from notifier.telegram      import TelegramNotifier
+from notifier.email_notifier import EmailNotifier
 
 # ---------------------------------------------------------------------------
 logging.basicConfig(
@@ -82,29 +83,42 @@ def run_morning(period: str = "today", notify: bool = True) -> dict:
     logger.info("  Building India watchlist…")
     result["india_stocks"] = sa.get_india_watchlist(period)
 
-    # 4. Digest
+    # 4. Dispatch digest — Telegram + Email (whichever is configured)
     if notify:
-        notifier = TelegramNotifier()
         stocks_merged = {"us": result["us_stocks"], "india": result["india_stocks"]}
-        ok = notifier.send_daily_digest(
-            us_data    = result["us_news"],
-            india_data = result["india_news"],
-            stocks_data= stocks_merged,
-            snapshot   = result["snapshot"],
-        )
-        logger.info("  Digest sent: %s", "✓" if ok else "✗")
-        result["digest_sent"] = ok
 
-        # Send high-confidence signal alerts
-        _fire_signal_alerts(result["us_stocks"],    notifier, market="US")
-        _fire_signal_alerts(result["india_stocks"], notifier, market="India")
+        # Telegram
+        tg = TelegramNotifier()
+        tg_ok = tg.send_daily_digest(
+            us_data     = result["us_news"],
+            india_data  = result["india_news"],
+            stocks_data = stocks_merged,
+            snapshot    = result["snapshot"],
+        )
+        logger.info("  Telegram digest: %s", "✓" if tg_ok else "✗ (not configured)")
+        result["telegram_sent"] = tg_ok
+
+        # Email
+        em = EmailNotifier()
+        em_ok = em.send_daily_digest(
+            us_data     = result["us_news"],
+            india_data  = result["india_news"],
+            stocks_data = stocks_merged,
+            snapshot    = result["snapshot"],
+        )
+        logger.info("  Email digest:    %s", "✓" if em_ok else "✗ (not configured)")
+        result["email_sent"] = em_ok
+
+        # High-confidence signal alerts (Telegram only)
+        _fire_signal_alerts(result["us_stocks"],    tg, market="US")
+        _fire_signal_alerts(result["india_stocks"], tg, market="India")
 
     logger.info("▶  Morning run complete")
     return result
 
 
 def run_evening(notify: bool = True) -> dict:
-    """Evening pipeline: fetch daily lesson and send to Telegram."""
+    """Evening pipeline: fetch daily lesson, send via Telegram + Email."""
     logger.info("▶  ARIA Evening run started  [%s]", datetime.now(IST).strftime("%H:%M IST"))
     la = LearningAgent()
     logger.info("  Fetching daily lesson…")
@@ -113,10 +127,16 @@ def run_evening(notify: bool = True) -> dict:
 
     result = {"lesson": lesson}
     if notify:
-        notifier = TelegramNotifier()
-        ok = notifier.send_learning(lesson)
-        logger.info("  Lesson sent: %s", "✓" if ok else "✗")
-        result["lesson_sent"] = ok
+        tg    = TelegramNotifier()
+        tg_ok = tg.send_learning(lesson)
+        logger.info("  Telegram lesson: %s", "✓" if tg_ok else "✗ (not configured)")
+
+        em    = EmailNotifier()
+        em_ok = em.send_learning(lesson)
+        logger.info("  Email lesson:    %s", "✓" if em_ok else "✗ (not configured)")
+
+        result["telegram_sent"] = tg_ok
+        result["email_sent"]    = em_ok
 
     logger.info("▶  Evening run complete")
     return result
