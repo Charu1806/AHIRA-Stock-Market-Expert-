@@ -247,35 +247,99 @@ def _spin() -> str:
 # ── Period map ─────────────────────────────────────────────────────────────
 _PERIOD_MAP = {"Today": "today", "This Week": "week", "This Month": "month"}
 
-# ── Cached agent calls ─────────────────────────────────────────────────────
+# ── Session-state lazy cache ────────────────────────────────────────────────
+# Results are stored in session_state keyed by (tab, period).
+# Switching tabs NEVER re-calls the AI — only explicit Refresh clears the key.
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_us_news(period: str) -> dict:
-    return NewsAgent().analyse_us_news(period)
+_TAB_KEYS = ["news_world", "india_news", "us_stocks", "india_stocks", "lesson"]
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_global_news(period: str) -> dict:
-    return NewsAgent().analyse_global_news(period)
+def _skey(tab: str, period: str) -> str:
+    return f"data_{tab}_{period}"
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_india_news(period: str) -> dict:
-    return NewsAgent().analyse_india_news(period)
+def _is_loaded(tab: str, period: str) -> bool:
+    return _skey(tab, period) in st.session_state
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_us_watchlist(period: str) -> dict:
-    return StockAgent().get_us_watchlist(period)
+def _get(tab: str, period: str):
+    return st.session_state.get(_skey(tab, period))
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_india_watchlist(period: str) -> dict:
-    return StockAgent().get_india_watchlist(period)
+def _store(tab: str, period: str, data):
+    st.session_state[_skey(tab, period)] = data
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_lesson() -> dict:
-    return LearningAgent().get_daily_lesson()
+def _clear(tab: str, period: str):
+    k = _skey(tab, period)
+    if k in st.session_state:
+        del st.session_state[k]
 
+def _clear_all(period: str):
+    for t in _TAB_KEYS:
+        _clear(t, period)
+
+# ── Snapshot (short TTL — use st.cache_data) ──────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_snapshot() -> dict:
     return PriceFetcher().get_market_snapshot()
+
+# ── Step-by-step AI loader ─────────────────────────────────────────────────
+_LOAD_STEPS = {
+    "news_world":   ["🌐 Fetching live headlines…",
+                     "🇺🇸 ARIA analysing US market stories…",
+                     "🌍 ARIA analysing global macro stories…",
+                     "✅ Done"],
+    "india_news":   ["📰 Fetching India news feeds…",
+                     "🇮🇳 ARIA analysing Nifty & sector stories…",
+                     "📊 Identifying impacted stocks…",
+                     "✅ Done"],
+    "us_stocks":    ["📡 Fetching US market snapshot…",
+                     "🤖 ARIA building US watchlist…",
+                     "📈 Ranking trending stocks…",
+                     "✅ Done"],
+    "india_stocks": ["📡 Fetching India market snapshot…",
+                     "🤖 ARIA building India watchlist…",
+                     "📉 Ranking Nifty movers…",
+                     "✅ Done"],
+    "lesson":       ["📚 Scanning today's market headlines…",
+                     "🧠 ARIA selecting today's concept…",
+                     "✍️  Crafting lesson with India & US angles…",
+                     "✅ Done"],
+}
+
+def _run_with_loader(tab: str, period: str, fn) -> dict:
+    """Run fn() while showing a step-by-step progress loader."""
+    steps = _LOAD_STEPS.get(tab, ["🤖 ARIA is thinking…", "✅ Done"])
+    placeholder = st.empty()
+
+    import time as _time
+
+    def _show(msg: str, done: bool = False):
+        icon = "✅" if done else "⏳"
+        placeholder.html(
+            f'<div style="display:flex;align-items:center;gap:12px;padding:20px 0">'
+            f'<div style="font-size:1.6rem;animation:{"none" if done else "spin 1s linear infinite"}">'
+            f'{"✅" if done else "🤖"}</div>'
+            f'<div>'
+            f'<div style="font-weight:700;font-size:0.95rem;color:{T["text"]}">'
+            f'{"Analysis complete" if done else "ARIA is working…"}</div>'
+            f'<div style="color:{T["text_muted"]};font-size:0.85rem;margin-top:3px">{msg}</div>'
+            f'</div></div>'
+            f'<style>@keyframes spin{{to{{transform:rotate(360deg)}}}}</style>'
+        )
+
+    for i, step in enumerate(steps[:-1]):
+        _show(step)
+        if i == 0:
+            # Actually run the work on first step
+            try:
+                result = fn()
+                _show(steps[-1], done=True)
+                _time.sleep(0.4)
+                placeholder.empty()
+                return result
+            except Exception as exc:
+                placeholder.empty()
+                raise exc
+
+    placeholder.empty()
+    return {}
 
 # ── Helper renderers ───────────────────────────────────────────────────────
 
@@ -348,26 +412,23 @@ with st.sidebar:
 
     st.divider()
     run_all = st.button("🚀 Run Full Analysis", type="primary", width="stretch")
-
     if run_all:
-        st.cache_data.clear()
+        _clear_all(period)
+        fetch_snapshot.clear()
         st.rerun()
 
     st.divider()
     st.markdown("**Refresh individual tabs:**")
-    ref_us     = st.button("🇺🇸 Refresh US News",     width="stretch")
-    ref_global = st.button("🌍 Refresh Global News",   width="stretch")
-    ref_india  = st.button("🇮🇳 Refresh India News",   width="stretch")
-    ref_us_wl  = st.button("📈 Refresh US Stocks",     width="stretch")
-    ref_in_wl  = st.button("📉 Refresh India Stocks",  width="stretch")
-    ref_lesson = st.button("🎓 Refresh Lesson",        width="stretch")
-
-    if ref_us:     fetch_us_news.clear();      st.rerun()
-    if ref_global: fetch_global_news.clear();  st.rerun()
-    if ref_india:  fetch_india_news.clear();   st.rerun()
-    if ref_us_wl:  fetch_us_watchlist.clear(); st.rerun()
-    if ref_in_wl:  fetch_india_watchlist.clear(); st.rerun()
-    if ref_lesson: fetch_lesson.clear();       st.rerun()
+    if st.button("🌐 Refresh World News",   width="stretch"):
+        _clear("news_world",   period); st.rerun()
+    if st.button("🇮🇳 Refresh India News",  width="stretch"):
+        _clear("india_news",   period); st.rerun()
+    if st.button("📈 Refresh US Stocks",    width="stretch"):
+        _clear("us_stocks",    period); st.rerun()
+    if st.button("📉 Refresh India Stocks", width="stretch"):
+        _clear("india_stocks", period); st.rerun()
+    if st.button("🎓 Refresh Lesson",       width="stretch"):
+        _clear("lesson",       period); st.rerun()
 
     st.divider()
     # Provider status
@@ -446,29 +507,105 @@ for col, (label, data) in zip(cols, snap_items):
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════
-# TABS
+# TABS  (5 tabs — US+Global merged into "World News")
 # ══════════════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "🇺🇸 US News & Stock Impact",
-    "🌍 Global News",
-    "🇮🇳 India News & Stock Impact",
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🌐 World News",
+    "🇮🇳 India News & Stocks",
     "📈 Top US Stocks",
     "📉 Top India Stocks",
     "🎓 Learning of the Day",
 ])
 
 # ──────────────────────────────────────────────────────────────────────────
-# TAB 1 — US News
+# TAB 1 — World News (US + Global merged)
 # ──────────────────────────────────────────────────────────────────────────
 with tab1:
-    st.markdown("#### 🇺🇸 US Market News Analysis")
-    with st.spinner(_spin()):
+    # Lazy load — only call AI on first visit; instant on tab switch
+    if not _is_loaded("news_world", period):
+        def _load_world():
+            na = NewsAgent()
+            us   = na.analyse_us_news(period)
+            gl   = na.analyse_global_news(period)
+            return {"us": us, "global": gl}
         try:
-            us_data = fetch_us_news(period)
+            _store("news_world", period, _run_with_loader("news_world", period, _load_world))
         except Exception as e:
-            st.error(f"Failed to load US news: {e}")
+            st.error(f"❌ Failed to load World News: {e}")
             st.stop()
+
+    world = _get("news_world", period) or {}
+    us_data = world.get("us", {})
+    gl_data = world.get("global", {})
+
+    # Sub-toggle: US ↔ Global
+    view = st.radio("View", ["🇺🇸 US Market Stories", "🌍 Global Macro"], horizontal=True, label_visibility="collapsed")
+    st.divider()
+
+    if view == "🇺🇸 US Market Stories":
+        st.markdown("#### 🇺🇸 US Market News Analysis")
+        mood = us_data.get("macro_mood", "mixed")
+        mood_color = {"risk_on": "#2da44e", "risk_off": "#cf222e", "mixed": T["hld_fg"]}.get(mood, T["text_muted"])
+        st.html(
+            f'<div style="margin-bottom:14px">'
+            f'Macro mood: <span style="color:{mood_color};font-weight:700">{mood.replace("_"," ").upper()}</span>'
+            f'&nbsp;·&nbsp;<span style="color:{T["text_muted"]};font-size:0.85rem">{us_data.get("sector_rotation","")}</span>'
+            f'</div>',
+        )
+        active_data = us_data
+    else:
+        st.markdown("#### 🌍 Global Macro Analysis")
+        dom  = gl_data.get("dominant_theme","")
+        tail = gl_data.get("tail_risk","")
+        if dom:  st.info(f"**Dominant theme:** {dom}")
+        if tail: st.warning(f"**Tail risk:** {tail}")
+        active_data = gl_data
+
+    for story in active_data.get("stories", []):
+        is_global = view == "🌍 Global Macro"
+        border  = _story_border(story) if not is_global else "neutral"
+        impacts = story.get("impacted_stocks", [])
+        cmi     = story.get("cross_market_impact", {})
+        with st.container():
+            st.html(
+                f'<div class="aria-card {border}">'
+                f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
+                f'<span style="font-size:1.05rem;font-weight:700">{story.get("headline","")}</span>'
+                f'{_cat_badge(story.get("category",""))}'
+                f'<span style="color:{T["text_muted"]};font-size:0.78rem">{story.get("source","")} · {story.get("date","")}</span>'
+                f'</div>'
+                f'<div style="color:{T["text_body"]};font-size:0.88rem;line-height:1.55">{story.get("summary","")}</div>'
+                f'</div>',
+            )
+            if is_global and cmi:
+                st.html(
+                    f'<div class="cross-grid">'
+                    f'<div class="cross-cell"><div class="cross-label">🇺🇸 US EQUITIES</div>{cmi.get("us_equities","—")}</div>'
+                    f'<div class="cross-cell"><div class="cross-label">🇮🇳 INDIA EQUITIES</div>{cmi.get("india_equities","—")}</div>'
+                    f'<div class="cross-cell"><div class="cross-label">🛢 COMMODITIES</div>{cmi.get("commodities","—")}</div>'
+                    f'<div class="cross-cell"><div class="cross-label">💱 CURRENCIES</div>{cmi.get("currencies","—")}</div>'
+                    f'</div>',
+                )
+            elif impacts:
+                with st.expander(f"📊 Stock Impact ({len(impacts)} stocks)"):
+                    i_cols = st.columns(min(len(impacts), 3))
+                    for idx, imp in enumerate(impacts):
+                        sig = imp.get("signal","neutral")
+                        clr = {"bullish":"#2da44e","bearish":"#cf222e","neutral":T["text_muted"]}.get(sig, T["text_muted"])
+                        pct = imp.get("impact_pct", 0)
+                        with i_cols[idx % len(i_cols)]:
+                            st.html(
+                                f'<div class="aria-card" style="padding:10px 14px">'
+                                f'<div style="font-size:1.1rem;font-weight:800;color:{T["text"]}">{imp.get("ticker","")}</div>'
+                                f'<div style="color:{T["text_muted"]};font-size:0.78rem;margin-bottom:6px">{imp.get("company","")}</div>'
+                                f'<div>{_signal_badge(sig)} <span style="color:{clr};font-weight:700">{pct:+.1f}%</span></div>'
+                                f'<div style="font-size:0.8rem;color:{T["text_body"]};margin-top:6px">{imp.get("why","")}</div>'
+                                f'</div>',
+                            )
+            take = story.get("aria_take","")
+            if take:
+                st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>')
 
     mood = us_data.get("macro_mood", "mixed")
     mood_color = {"risk_on": "#2da44e", "risk_off": "#cf222e", "mixed": T["hld_fg"]}.get(mood, T["text_muted"])
@@ -515,86 +652,48 @@ with tab1:
                 st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
-# TAB 2 — Global News
+# TAB 2 — India News
 # ──────────────────────────────────────────────────────────────────────────
 with tab2:
-    st.markdown("#### 🌍 Global Macro Analysis")
-    with st.spinner(_spin()):
+    if not _is_loaded("india_news", period):
+        def _load_india():
+            na = NewsAgent()
+            return na.analyse_india_news(period)
         try:
-            gl_data = fetch_global_news(period)
+            _store("india_news", period, _run_with_loader("india_news", period, _load_india))
         except Exception as e:
-            st.error(f"Failed to load global news: {e}")
+            st.error(f"❌ Failed to load India news: {e}")
             st.stop()
 
-    dom = gl_data.get("dominant_theme","")
-    tail = gl_data.get("tail_risk","")
-    if dom:
-        st.info(f"**Dominant theme:** {dom}")
-    if tail:
-        st.warning(f"**Tail risk:** {tail}")
-
-    for story in gl_data.get("stories", []):
-        cmi = story.get("cross_market_impact", {})
-        with st.container():
-            st.html(
-                f'<div class="aria-card neutral">'
-                f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
-                f'<span style="font-size:1.05rem;font-weight:700">{story.get("headline","")}</span>'
-                f'{_cat_badge(story.get("category",""))}'
-                f'<span style="color:{T["text_muted"]};font-size:0.78rem">{story.get("source","")} · {story.get("date","")}</span>'
-                f'</div>'
-                f'<div style="color:{T["text_body"]};font-size:0.88rem;line-height:1.55;margin-bottom:10px">{story.get("summary","")}</div>'
-                f'<div class="cross-grid">'
-                f'<div class="cross-cell"><div class="cross-label">🇺🇸 US EQUITIES</div>{cmi.get("us_equities","—")}</div>'
-                f'<div class="cross-cell"><div class="cross-label">🇮🇳 INDIA EQUITIES</div>{cmi.get("india_equities","—")}</div>'
-                f'<div class="cross-cell"><div class="cross-label">🛢 COMMODITIES</div>{cmi.get("commodities","—")}</div>'
-                f'<div class="cross-cell"><div class="cross-label">💱 CURRENCIES</div>{cmi.get("currencies","—")}</div>'
-                f'</div>'
-                f'</div>',
-            )
-            take = story.get("aria_take","")
-            if take:
-                st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>')
-
-# ──────────────────────────────────────────────────────────────────────────
-# TAB 3 — India News
-# ──────────────────────────────────────────────────────────────────────────
-with tab3:
+    in_data = _get("india_news", period) or {}
     st.markdown("#### 🇮🇳 India Market Analysis")
-    with st.spinner(_spin()):
-        try:
-            in_data = fetch_india_news(period)
-        except Exception as e:
-            st.error(f"Failed to load India news: {e}")
-            st.stop()
 
-    # FII/DII indicator
     fii = in_data.get("fii_dii_summary","")
     nifty_pulse = in_data.get("nifty_pulse","")
     if fii or nifty_pulse:
         fc1, fc2 = st.columns(2)
-        if fii:
-            st.html(
-                f'<div class="aria-card" style="padding:10px 14px">'
-                f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600">FII/DII FLOW TREND</div>'
-                f'<div style="font-size:0.88rem;margin-top:4px">{fii}</div>'
-                f'</div>',
-            )
-        if nifty_pulse:
-            st.html(
-                f'<div class="aria-card" style="padding:10px 14px">'
-                f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600">NIFTY PULSE</div>'
-                f'<div style="font-size:0.88rem;margin-top:4px">{nifty_pulse}</div>'
-                f'</div>',
-            )
-        rupee = in_data.get("rupee_view","")
-        if rupee:
-            st.html(
-                f'<div style="color:{T["text_muted"]};font-size:0.82rem;margin-bottom:14px">💱 Rupee: {rupee}</div>',
-            )
+        with fc1:
+            if fii:
+                st.html(
+                    f'<div class="aria-card" style="padding:10px 14px">'
+                    f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600">FII/DII FLOW TREND</div>'
+                    f'<div style="font-size:0.88rem;margin-top:4px">{fii}</div>'
+                    f'</div>',
+                )
+        with fc2:
+            if nifty_pulse:
+                st.html(
+                    f'<div class="aria-card" style="padding:10px 14px">'
+                    f'<div style="color:{T["text_muted"]};font-size:0.72rem;font-weight:600">NIFTY PULSE</div>'
+                    f'<div style="font-size:0.88rem;margin-top:4px">{nifty_pulse}</div>'
+                    f'</div>',
+                )
+    rupee = in_data.get("rupee_view","")
+    if rupee:
+        st.html(f'<div style="color:{T["text_muted"]};font-size:0.82rem;margin-bottom:14px">💱 Rupee: {rupee}</div>')
 
     for story in in_data.get("stories", []):
-        border = _story_border(story)
+        border  = _story_border(story)
         impacts = story.get("impacted_stocks", [])
         with st.container():
             st.html(
@@ -619,8 +718,7 @@ with tab3:
                                 f'<div class="aria-card" style="padding:10px 14px">'
                                 f'<div style="font-size:1.1rem;font-weight:800;color:{T["text"]}">{imp.get("ticker","")}</div>'
                                 f'<div style="color:{T["text_muted"]};font-size:0.78rem;margin-bottom:6px">{imp.get("company","")}</div>'
-                                f'<div>{_signal_badge(sig)} '
-                                f'<span style="color:{clr};font-weight:700">{pct:+.1f}%</span></div>'
+                                f'<div>{_signal_badge(sig)} <span style="color:{clr};font-weight:700">{pct:+.1f}%</span></div>'
                                 f'<div style="font-size:0.8rem;color:{T["text_body"]};margin-top:6px">{imp.get("why","")}</div>'
                                 f'</div>',
                             )
@@ -629,16 +727,20 @@ with tab3:
                 st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {take}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
-# TAB 4 — US Watchlist
+# TAB 3 — US Watchlist
 # ──────────────────────────────────────────────────────────────────────────
-with tab4:
-    st.markdown("#### 📈 US Stocks Watchlist — ARIA's Picks")
-    with st.spinner(_spin()):
+with tab3:
+    if not _is_loaded("us_stocks", period):
+        def _load_us_wl():
+            return StockAgent().get_us_watchlist(period)
         try:
-            us_wl = fetch_us_watchlist(period)
+            _store("us_stocks", period, _run_with_loader("us_stocks", period, _load_us_wl))
         except Exception as e:
-            st.error(f"Failed to load US watchlist: {e}")
+            st.error(f"❌ Failed to load US watchlist: {e}")
             st.stop()
+
+    us_wl = _get("us_stocks", period) or {}
+    st.markdown("#### 📈 US Stocks Watchlist — ARIA's Picks")
 
     macro_ctx = us_wl.get("macro_context","")
     if macro_ctx:
@@ -727,16 +829,20 @@ with tab4:
         st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {summary}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
-# TAB 5 — India Watchlist
+# TAB 4 — India Watchlist
 # ──────────────────────────────────────────────────────────────────────────
-with tab5:
-    st.markdown("#### 📉 India Stocks Watchlist — ARIA's Picks")
-    with st.spinner(_spin()):
+with tab4:
+    if not _is_loaded("india_stocks", period):
+        def _load_india_wl():
+            return StockAgent().get_india_watchlist(period)
         try:
-            in_wl = fetch_india_watchlist(period)
+            _store("india_stocks", period, _run_with_loader("india_stocks", period, _load_india_wl))
         except Exception as e:
-            st.error(f"Failed to load India watchlist: {e}")
+            st.error(f"❌ Failed to load India watchlist: {e}")
             st.stop()
+
+    in_wl = _get("india_stocks", period) or {}
+    st.markdown("#### 📉 India Stocks Watchlist — ARIA's Picks")
 
     # Nifty view badge
     nv = in_wl.get("nifty_view","Sideways")
@@ -853,16 +959,20 @@ with tab5:
         st.html(f'<div class="aria-take">💡 <strong>ARIA:</strong> {summary_in}</div>')
 
 # ──────────────────────────────────────────────────────────────────────────
-# TAB 6 — Learning of the Day
+# TAB 5 — Learning of the Day
 # ──────────────────────────────────────────────────────────────────────────
-with tab6:
-    st.markdown("#### 🎓 Learning of the Day")
-    with st.spinner(_spin()):
+with tab5:
+    if not _is_loaded("lesson", period):
+        def _load_lesson():
+            return LearningAgent().get_daily_lesson()
         try:
-            lesson = fetch_lesson()
+            _store("lesson", period, _run_with_loader("lesson", period, _load_lesson))
         except Exception as e:
-            st.error(f"Failed to load lesson: {e}")
+            st.error(f"❌ Failed to load lesson: {e}")
             st.stop()
+
+    lesson = _get("lesson", period) or {}
+    st.markdown("#### 🎓 Learning of the Day")
 
     diff = lesson.get("difficulty","intermediate")
     st.html(
