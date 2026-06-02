@@ -313,13 +313,19 @@ class AIEngine:
     async def _call_anthropic(self, client, prompt: str, max_tokens: int) -> str:
         loop = asyncio.get_event_loop()
         try:
+            # Prefill the assistant turn with "{" — forces Claude to start JSON immediately,
+            # preventing any preamble text that breaks JSON parsing.
             resp = await loop.run_in_executor(None, lambda: client.messages.create(
                 model=PROVIDER_META["anthropic"]["model"],
                 max_tokens=max_tokens,
                 system=ARIA_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "user",      "content": prompt},
+                    {"role": "assistant", "content": "{"},   # prefill
+                ],
             ))
-            return resp.content[0].text
+            # Prepend the prefill character we consumed
+            return "{" + resp.content[0].text
         except Exception as e:
             msg = str(e)
             if "429" in msg or "rate" in msg.lower() or "overloaded" in msg.lower():
@@ -332,19 +338,76 @@ class AIEngine:
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
+        """
+        Robustly parse JSON from any LLM response.
+        Handles: markdown fences, preamble text, trailing commas,
+        truncated responses, and unescaped characters.
+        """
         if not raw:
             raise ValueError("Empty response from AI provider.")
+
+        # 1. Strip markdown fences
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned.strip())
+
+        # 2. Try straight parse first
         try:
             result = json.loads(cleaned)
+            return result if isinstance(result, dict) else {"value": result}
         except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-            if match:
-                result = json.loads(match.group())
-            else:
-                raise ValueError(f"No valid JSON found in response:\n{raw[:400]}")
-        return result if isinstance(result, dict) else {"value": result}
+            pass
+
+        # 3. Extract the outermost { ... } block (skips preamble text)
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            candidate = match.group()
+            try:
+                result = json.loads(candidate)
+                return result if isinstance(result, dict) else {"value": result}
+            except json.JSONDecodeError:
+                # 4. Repair common JSON issues before giving up
+                repaired = _repair_json(candidate)
+                try:
+                    result = json.loads(repaired)
+                    return result if isinstance(result, dict) else {"value": result}
+                except json.JSONDecodeError:
+                    pass
+
+        raise ValueError(f"No valid JSON found in response:\n{raw[:500]}")
+
+
+# ---------------------------------------------------------------------------
+# JSON repair helper
+# ---------------------------------------------------------------------------
+
+def _repair_json(s: str) -> str:
+    """
+    Best-effort repair of common JSON syntax errors produced by LLMs:
+    - Trailing commas before } or ]
+    - Single quotes instead of double quotes
+    - Unescaped newlines inside strings
+    - Truncated JSON (add closing braces/brackets)
+    """
+    # Remove trailing commas before closing braces/brackets
+    s = re.sub(r",\s*([\}\]])", r"\1", s)
+
+    # Replace single-quoted keys/values with double quotes
+    # Only when the single quote is used as a JSON delimiter
+    s = re.sub(r"(?<![\\])'", '"', s)
+
+    # Remove control characters inside strings that break parsing
+    s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', s)
+
+    # Try to close unclosed structures by counting braces
+    open_braces   = s.count('{') - s.count('}')
+    open_brackets = s.count('[') - s.count(']')
+    if open_braces > 0 or open_brackets > 0:
+        # Strip trailing comma if present before closing
+        s = re.sub(r",\s*$", "", s.rstrip())
+        s += ']' * max(open_brackets, 0)
+        s += '}' * max(open_braces, 0)
+
+    return s
 
 
 # ---------------------------------------------------------------------------

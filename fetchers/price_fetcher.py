@@ -192,8 +192,15 @@ class PriceFetcher:
                 logger.info("Snapshot %s (%s): %s  %s%%",
                     name, ticker, data.get("price","N/A"), data.get("change_pct","N/A"))
             except Exception as exc:
-                logger.warning("Index extract failed %s (%s): %s", name, ticker, exc)
-                snapshot[region][name] = {"error": str(exc)}
+                # Batch failed for this ticker — try individual direct API call
+                logger.warning("Batch miss %s (%s): %s — trying direct fetch", name, ticker, exc)
+                try:
+                    data = self._get_index_quote(ticker)
+                    snapshot[region][name] = data
+                    logger.info("Direct fetch OK %s: %s", name, data.get("price","N/A"))
+                except Exception as exc2:
+                    logger.warning("Direct fetch also failed %s: %s", name, exc2)
+                    snapshot[region][name] = {"error": str(exc2)}
 
         if self._use_cache:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
