@@ -347,7 +347,7 @@ with st.sidebar:
     source_filter = st.selectbox("Sources", ["All", "US Sources", "India Sources", "Global"])
 
     st.divider()
-    run_all = st.button("🚀 Run Full Analysis", type="primary", use_container_width=True)
+    run_all = st.button("🚀 Run Full Analysis", type="primary", width="stretch")
 
     if run_all:
         st.cache_data.clear()
@@ -355,12 +355,12 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**Refresh individual tabs:**")
-    ref_us     = st.button("🇺🇸 Refresh US News",     use_container_width=True)
-    ref_global = st.button("🌍 Refresh Global News",   use_container_width=True)
-    ref_india  = st.button("🇮🇳 Refresh India News",   use_container_width=True)
-    ref_us_wl  = st.button("📈 Refresh US Stocks",     use_container_width=True)
-    ref_in_wl  = st.button("📉 Refresh India Stocks",  use_container_width=True)
-    ref_lesson = st.button("🎓 Refresh Lesson",        use_container_width=True)
+    ref_us     = st.button("🇺🇸 Refresh US News",     width="stretch")
+    ref_global = st.button("🌍 Refresh Global News",   width="stretch")
+    ref_india  = st.button("🇮🇳 Refresh India News",   width="stretch")
+    ref_us_wl  = st.button("📈 Refresh US Stocks",     width="stretch")
+    ref_in_wl  = st.button("📉 Refresh India Stocks",  width="stretch")
+    ref_lesson = st.button("🎓 Refresh Lesson",        width="stretch")
 
     if ref_us:     fetch_us_news.clear();      st.rerun()
     if ref_global: fetch_global_news.clear();  st.rerun()
@@ -690,7 +690,7 @@ with tab4:
             xaxis=dict(gridcolor=T["plot_grid"]),
             yaxis=dict(gridcolor=T["plot_grid"], zeroline=True, zerolinecolor=T["plot_zero"]),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     summary = us_wl.get("aria_summary","")
     if summary:
@@ -816,7 +816,7 @@ with tab5:
             xaxis=dict(gridcolor=T["plot_grid"]),
             yaxis=dict(gridcolor=T["plot_grid"], zeroline=True, zerolinecolor=T["plot_zero"]),
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
     summary_in = in_wl.get("aria_summary","")
     if summary_in:

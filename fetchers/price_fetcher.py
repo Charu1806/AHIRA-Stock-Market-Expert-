@@ -152,42 +152,90 @@ class PriceFetcher:
     def get_market_snapshot(self) -> dict:
         """
         Return current values for major US and India indices.
-
-        Structure:
-            {
-              "us":    {"S&P 500":  {"price": ..., "change_pct": ...}, ...},
-              "india": {"NIFTY 50": {"price": ..., "change_pct": ...}, ...},
-            }
+        Fetches all 6 tickers in a single batch yfinance download — one request
+        instead of six, which avoids Yahoo Finance rate limits on cloud servers.
         """
-        snapshot: dict[str, dict] = {}
-
+        # Flatten all tickers into one list preserving region/name mapping
+        all_tickers: list[tuple[str, str, str]] = []  # (region, name, ticker)
         for region, indices in _MARKET_INDICES.items():
-            snapshot[region] = {}
             for name, ticker in indices.items():
-                try:
-                    data = self._get_index_quote(ticker)
-                    snapshot[region][name] = data
-                    logger.info(
-                        "Snapshot %s (%s): %s  %s%%",
-                        name, ticker,
-                        data.get("price", "N/A"),
-                        data.get("change_pct", "N/A"),
-                    )
-                except Exception as exc:
-                    logger.warning("Index fetch failed %s (%s): %s", name, ticker, exc)
-                    snapshot[region][name] = {"error": str(exc)}
+                all_tickers.append((region, name, ticker))
+
+        cache_path = CACHE_DIR / "snapshot_batch.json"
+        if self._use_cache and cache_path.exists():
+            if time.time() - cache_path.stat().st_mtime < CACHE_TTL_PRICE:
+                stored = json.loads(cache_path.read_text())
+                logger.info("Snapshot loaded from cache")
+                return stored
+
+        # Single batch download for all index tickers
+        symbols = [t for _, _, t in all_tickers]
+        try:
+            df = yf.download(
+                symbols,
+                period="2d",
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+                group_by="ticker",
+            )
+        except Exception as exc:
+            logger.warning("Batch snapshot download failed: %s", exc)
+            df = None
+
+        snapshot: dict[str, dict] = {"us": {}, "india": {}}
+
+        for region, name, ticker in all_tickers:
+            try:
+                data = self._extract_from_batch(df, ticker)
+                snapshot[region][name] = data
+                logger.info("Snapshot %s (%s): %s  %s%%",
+                    name, ticker, data.get("price","N/A"), data.get("change_pct","N/A"))
+            except Exception as exc:
+                logger.warning("Index extract failed %s (%s): %s", name, ticker, exc)
+                snapshot[region][name] = {"error": str(exc)}
+
+        if self._use_cache:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(snapshot))
 
         return snapshot
 
+    def _extract_from_batch(self, df, ticker: str) -> dict:
+        """Extract price + change% for one ticker from a batch download DataFrame."""
+        if df is None or df.empty:
+            raise ValueError("Empty batch DataFrame")
+
+        try:
+            # yfinance batch download MultiIndex columns: (ticker, field)
+            if isinstance(df.columns, pd.MultiIndex):
+                close = df[ticker]["Close"].dropna()
+            else:
+                close = df["Close"].squeeze().dropna()
+
+            if len(close) < 1:
+                raise ValueError(f"No close data for {ticker}")
+
+            current = float(close.iloc[-1])
+            prev    = float(close.iloc[-2]) if len(close) >= 2 else current
+            change_pct = round((current - prev) / prev * 100, 2) if prev else None
+
+            return {
+                "price":      round(current, 2),
+                "change_pct": change_pct,
+                "ticker":     ticker,
+            }
+        except KeyError:
+            raise ValueError(f"Ticker {ticker} not found in batch result")
+
     def _get_index_quote(self, ticker: str) -> dict:
+        """Single-ticker fallback (used only if batch fails)."""
         cache_path = CACHE_DIR / f"idx_{ticker.replace('^', '').replace('/', '_')}.json"
 
         if self._use_cache and cache_path.exists():
             if time.time() - cache_path.stat().st_mtime < CACHE_TTL_PRICE:
                 return json.loads(cache_path.read_text())
 
-        # Use Yahoo Finance chart API directly — much faster than yf.Ticker().info
-        # and works reliably on cloud servers (no cookie/consent issues)
         import requests as _req
         url = (
             f"https://query1.finance.yahoo.com/v8/finance/chart/"
