@@ -49,49 +49,29 @@ class LearningAgent:
             logger.info("[lesson] Returning cached lesson.")
             return cached
 
-        headlines = self._fetcher.fetch_headlines_context("global", "today")
+        from config import settings as _cfg
+        articles = self._fetcher.fetch_rss(
+            list(_cfg.get_active_sources("global").values()), max_per_source=2
+        )[:10]
+        headlines = "\n".join(f"- {a['title']}" for a in articles) or "Use training knowledge."
 
-        prompt = f"""You are ARIA. Today: {date.today()}.
+        prompt = f"""ARIA. Date:{date.today()}
 
-LIVE MARKET HEADLINES:
+HEADLINES:
 {headlines}
 
-Based on what is actually happening in markets today, choose ONE financial or
-investment concept that every serious investor should understand RIGHT NOW.
+Pick ONE financial concept highly relevant to markets RIGHT NOW (not textbook — live and applicable).
+Return JSON:
+{{"concept":"<4-8 words>","tagline":"<1 punchy sentence>","difficulty":"beginner|intermediate|advanced",
+"relevance":"<why now — 2 sentences>",
+"explanation":{{"core_idea":"<2 sentences>","mechanics":"<2 sentences>","why_it_matters_now":"<2 sentences>"}},
+"real_example":{{"title":"<recent event>","body":"<3 sentences with names/numbers>"}},
+"india_angle":"<2 sentences>","us_angle":"<2 sentences>",
+"takeaway":"<1 actionable sentence>","common_mistake":"<1 sentence>",
+"next_steps":["<action 1>","<action 2>","<action 3>"]}}"""
 
-Do NOT pick a random textbook concept. Pick something that directly explains,
-contextualises, or helps navigate today's market environment.
-
-Examples of the calibre you should aim for:
-- If central banks are pivoting: "Duration Risk and the Bond-Equity Seesaw"
-- If there's a sector rotation: "Factor Crowding and the Momentum Unwind"
-- If earnings season: "Guidance vs. Beat-and-Lower: How Markets Really React"
-- If volatility is low: "Volatility Risk Premium and When Calm Markets Lie"
-
-Respond with ONLY valid JSON:
-{{
-  "concept": "Name of the concept (4-8 words)",
-  "tagline": "One punchy sentence — what this concept explains about TODAY.",
-  "difficulty": "beginner|intermediate|advanced",
-  "relevance": "Why this specific concept matters RIGHT NOW — tie to live headlines.",
-  "explanation": {{
-    "core_idea": "2-3 sentences. The essence without jargon.",
-    "mechanics": "3-4 sentences. How it actually works — the plumbing.",
-    "why_it_matters_now": "2-3 sentences. Specific to current market conditions."
-  }},
-  "real_example": {{
-    "title": "A real, recent market event that illustrates this concept.",
-    "body": "4-5 sentences walking through the example. Specific names, numbers, dates."
-  }},
-  "india_angle": "2-3 sentences on how this concept plays out in Indian markets specifically.",
-  "us_angle": "2-3 sentences on the US market dimension.",
-  "takeaway": "The single most actionable insight an investor should walk away with.",
-  "common_mistake": "The most common way investors misapply or misunderstand this concept.",
-  "next_steps": ["Specific action 1", "Specific action 2", "Specific action 3"]
-}}"""
-
-        logger.info("[lesson] Prompt length: %d chars", len(prompt))
-        result = self._ai.sync_call(prompt)
+        logger.info("[lesson] ~%d tokens", len(prompt) // 4)
+        result = self._ai.sync_call(prompt, max_tokens=1000)
         data   = result["data"]
         data["_provider"]   = result["provider"]
         data["_date"]       = str(date.today())

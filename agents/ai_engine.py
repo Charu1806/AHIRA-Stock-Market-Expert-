@@ -47,7 +47,9 @@ CRITICAL: Always respond with valid JSON only. No markdown fences, no preamble."
 # Provider metadata — order defines fallback priority
 # ---------------------------------------------------------------------------
 PROVIDER_META = {
-    "groq":      {"label": "Groq",      "model": "llama-3.3-70b-versatile", "free": True,  "paid": False},
+    # llama-3.1-8b-instant: 20,000 TPM free (vs 6,000 for 70b) — 3× less rate limiting
+    # Still excellent for structured JSON extraction from financial news
+    "groq":      {"label": "Groq",      "model": "llama-3.1-8b-instant",    "free": True,  "paid": False},
     "gemini":    {"label": "Gemini",    "model": "gemini-1.5-flash",         "free": True,  "paid": False},
     "mistral":   {"label": "Mistral",   "model": "mistral-small-latest",     "free": True,  "paid": False},
     "anthropic": {"label": "Anthropic", "model": "claude-sonnet-4-6",        "free": False, "paid": True},

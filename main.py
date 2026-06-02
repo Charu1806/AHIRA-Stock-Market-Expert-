@@ -64,21 +64,25 @@ def run_morning(period: str = "today", notify: bool = True) -> dict:
     pf = PriceFetcher()
     result["snapshot"] = pf.get_market_snapshot()
 
-    # 2. News analysis
+    # 2. News analysis — 3s pause between calls to stay under TPM limits
     na = NewsAgent()
     logger.info("  Analysing US news…")
-    result["us_news"]    = na.analyse_us_news(period)
+    result["us_news"]     = na.analyse_us_news(period)
+    time.sleep(3)
 
     logger.info("  Analysing India news…")
-    result["india_news"] = na.analyse_india_news(period)
+    result["india_news"]  = na.analyse_india_news(period)
+    time.sleep(3)
 
     logger.info("  Analysing global news…")
     result["global_news"] = na.analyse_global_news(period)
+    time.sleep(3)
 
     # 3. Watchlists
     sa = StockAgent()
     logger.info("  Building US watchlist…")
-    result["us_stocks"]    = sa.get_us_watchlist(period)
+    result["us_stocks"]   = sa.get_us_watchlist(period)
+    time.sleep(3)
 
     logger.info("  Building India watchlist…")
     result["india_stocks"] = sa.get_india_watchlist(period)

@@ -33,8 +33,8 @@ class StockAgent:
         from fetchers.news_fetcher import NewsFetcher
         from fetchers.price_fetcher import PriceFetcher
         self._ai      = AIEngine()
-        self._fetcher = NewsFetcher()
-        self._prices  = PriceFetcher()
+        self._fetcher = NewsFetcher(cache=True)
+        self._prices  = PriceFetcher(cache=True)
 
     # ------------------------------------------------------------------
     # 1. US Watchlist
@@ -52,66 +52,31 @@ class StockAgent:
             logger.info("[watchlist_us] Returning cached result.")
             return cached
 
-        headlines = self._fetcher.fetch_headlines_context("us", period)
-        snapshot  = self._prices.get_market_snapshot()
-        us_snap   = snapshot.get("us", {})
+        from config import settings as _cfg
+        headlines = "\n".join(
+            f"- {a['title']}"
+            for a in self._fetcher.fetch_rss(
+                list(_cfg.get_active_sources("us").values()), max_per_source=3
+            )[:12]
+        ) or "Use training knowledge."
 
-        market_context = "\n".join(
-            f"  {name}: {d.get('price', 'N/A')}  ({d.get('change_pct', 0):+.2f}%)"
-            for name, d in us_snap.items() if "error" not in d
+        snapshot = self._prices.get_market_snapshot()
+        us_snap  = snapshot.get("us", {})
+        mkt = " | ".join(
+            f"{n}:{d.get('price','?')}({d.get('change_pct',0):+.1f}%)"
+            for n, d in us_snap.items() if "error" not in d
         )
 
-        prompt = f"""You are ARIA. Today: {date.today()}.
-
-LIVE US MARKET LEVELS:
-{market_context}
-
-LIVE HEADLINES:
+        prompt = f"""ARIA. Date:{date.today()} Period:{period}
+MARKET: {mkt}
+HEADLINES:
 {headlines}
 
-Based on the above live data, select exactly 10 US stocks that matter RIGHT NOW:
-- 5 stocks trending UP (catalysts, momentum, earnings beats, sector tailwinds)
-- 5 stocks trending DOWN (misses, leadership issues, sector headwinds, macro pressure)
-
-Do NOT use a fixed list. Pick based on current earnings cycle, Fed policy backdrop,
-sector rotation, and news flow. Think like a hedge fund PM building a daily watchlist.
-
-Respond with ONLY valid JSON:
-{{
-  "period": "{period}",
-  "market": "us",
-  "generated_on": "{date.today()}",
-  "macro_context": "2 sentence backdrop explaining today's market environment.",
-  "trending_up": [
-    {{
-      "ticker": "NVDA",
-      "company": "NVIDIA Corporation",
-      "sector": "Technology",
-      "est_change": 3.5,
-      "momentum": "strong|moderate|early",
-      "why_up": "Specific reason with catalyst — not generic.",
-      "catalyst": "earnings beat|product launch|analyst upgrade|sector rotation|buyback",
-      "signal": "buy|add|watch",
-      "risk": "What could invalidate this thesis?",
-      "tags": ["AI", "semiconductors", "momentum"]
-    }}
-  ],
-  "trending_down": [
-    {{
-      "ticker": "INTC",
-      "company": "Intel Corporation",
-      "sector": "Technology",
-      "est_change": -2.8,
-      "momentum": "strong|moderate|early",
-      "why_down": "Specific reason — not generic.",
-      "catalyst": "earnings miss|guidance cut|exec departure|competition|regulatory",
-      "signal": "sell|reduce|avoid",
-      "recovery_watch": "What would need to happen for a reversal?",
-      "tags": ["semiconductors", "turnaround_risk"]
-    }}
-  ],
-  "aria_summary": "ARIA's 3-sentence view on the US market setup today."
-}}"""
+Pick 10 US stocks RIGHT NOW — 5 up, 5 down. No fixed list; use earnings cycle, Fed policy, sector flows.
+Return JSON:
+{{"period":"{period}","market":"us","macro_context":"<2 sentences>","aria_summary":"<2 sentences>",
+"trending_up":[{{"ticker":"<SYM>","company":"<name>","sector":"<s>","est_change":0.0,"momentum":"strong|moderate|early","why_up":"<specific>","catalyst":"<type>","signal":"buy|add|watch","risk":"<1 sentence>","tags":["<t>"]}}],
+"trending_down":[{{"ticker":"<SYM>","company":"<name>","sector":"<s>","est_change":0.0,"momentum":"strong|moderate|early","why_down":"<specific>","catalyst":"<type>","signal":"sell|reduce|avoid","recovery_watch":"<1 sentence>","tags":["<t>"]}}]}}"""
 
         result = self._call(prompt, cache_key)
         logger.info(
@@ -137,73 +102,32 @@ Respond with ONLY valid JSON:
             logger.info("[watchlist_india] Returning cached result.")
             return cached
 
-        headlines = self._fetcher.fetch_headlines_context("india", period)
-        snapshot  = self._prices.get_market_snapshot()
-        india_snap = snapshot.get("india", {})
+        from config import settings as _cfg
+        headlines = "\n".join(
+            f"- {a['title']}"
+            for a in self._fetcher.fetch_rss(
+                list(_cfg.get_active_sources("india").values()), max_per_source=3
+            )[:12]
+        ) or "Use training knowledge."
 
-        market_context = "\n".join(
-            f"  {name}: {d.get('price', 'N/A')}  ({d.get('change_pct', 0):+.2f}%)"
-            for name, d in india_snap.items() if "error" not in d
+        snapshot   = self._prices.get_market_snapshot()
+        india_snap = snapshot.get("india", {})
+        mkt = " | ".join(
+            f"{n}:{d.get('price','?')}({d.get('change_pct',0):+.1f}%)"
+            for n, d in india_snap.items() if "error" not in d
         )
 
-        prompt = f"""You are ARIA. Today: {date.today()}.
-
-LIVE INDIA MARKET LEVELS:
-{market_context}
-
-LIVE HEADLINES:
+        prompt = f"""ARIA. Date:{date.today()} Period:{period}
+MARKET: {mkt}
+HEADLINES:
 {headlines}
 
-Select exactly 10 Indian stocks that matter RIGHT NOW:
-- 5 stocks trending UP (from Nifty 50, Nifty Midcap 100, or Nifty Smallcap)
-- 5 stocks trending DOWN
-
-Think like a Mumbai-based fund manager. Factor in FII/DII flows, RBI policy,
-quarterly results season, and global macro (Fed, crude oil, INR/USD).
-Use NSE tickers with .NS suffix.
-
-Respond with ONLY valid JSON:
-{{
-  "period": "{period}",
-  "market": "india",
-  "generated_on": "{date.today()}",
-  "nifty_view": "Bullish|Bearish|Sideways",
-  "nifty_target_near": 23800,
-  "nifty_support": 23200,
-  "fii_dii_note": "Current FII/DII posture and net flow trend.",
-  "macro_context": "2 sentence backdrop: RBI stance, INR, global factors.",
-  "trending_up": [
-    {{
-      "ticker": "RELIANCE.NS",
-      "company": "Reliance Industries",
-      "sector": "Conglomerate",
-      "index": "Nifty 50|Nifty Midcap|Nifty Smallcap",
-      "est_change": 2.1,
-      "momentum": "strong|moderate|early",
-      "why_up": "Specific catalyst — results, policy, flows.",
-      "catalyst": "q_results|fii_buying|policy_tailwind|technical_breakout|promoter_buying",
-      "signal": "buy|add|watch",
-      "risk": "Key risk to this view.",
-      "tags": ["large_cap", "energy", "momentum"]
-    }}
-  ],
-  "trending_down": [
-    {{
-      "ticker": "TATASTEEL.NS",
-      "company": "Tata Steel",
-      "sector": "Metals",
-      "index": "Nifty 50|Nifty Midcap|Nifty Smallcap",
-      "est_change": -1.8,
-      "momentum": "strong|moderate|early",
-      "why_down": "Specific reason.",
-      "catalyst": "q_miss|fii_selling|commodity_pressure|regulatory|technical_breakdown",
-      "signal": "sell|reduce|avoid",
-      "recovery_watch": "Trigger for reversal.",
-      "tags": ["metals", "cyclical"]
-    }}
-  ],
-  "aria_summary": "ARIA's 3-sentence view on Indian markets today."
-}}"""
+Pick 10 Indian stocks RIGHT NOW — 5 up, 5 down (Nifty 50/Midcap/Smallcap). Use .NS suffix.
+Factor: FII/DII flows, RBI policy, results season, crude oil, INR/USD.
+Return JSON:
+{{"period":"{period}","market":"india","nifty_view":"Bullish|Bearish|Sideways","nifty_target_near":0,"nifty_support":0,"fii_dii_note":"<1 sentence>","macro_context":"<2 sentences>","aria_summary":"<2 sentences>",
+"trending_up":[{{"ticker":"<SYM>.NS","company":"<name>","sector":"<s>","index":"Nifty 50|Nifty Midcap|Nifty Smallcap","est_change":0.0,"momentum":"strong|moderate|early","why_up":"<specific>","catalyst":"<type>","signal":"buy|add|watch","risk":"<1 sentence>","tags":["<t>"]}}],
+"trending_down":[{{"ticker":"<SYM>.NS","company":"<name>","sector":"<s>","index":"<i>","est_change":0.0,"momentum":"strong|moderate|early","why_down":"<specific>","catalyst":"<type>","signal":"sell|reduce|avoid","recovery_watch":"<1 sentence>","tags":["<t>"]}}]}}"""
 
         result = self._call(prompt, cache_key)
         logger.info(
@@ -249,8 +173,8 @@ Respond with ONLY valid JSON:
     # ------------------------------------------------------------------
 
     def _call(self, prompt: str, cache_key: str) -> dict:
-        logger.info("[%s] Prompt length: %d chars", cache_key, len(prompt))
-        result = self._ai.sync_call(prompt)
+        logger.info("[%s] ~%d tokens", cache_key, len(prompt) // 4)
+        result = self._ai.sync_call(prompt, max_tokens=1200)
         data   = result["data"]
         data["_provider"] = result["provider"]
         _save_cache(cache_key, data)
